@@ -469,6 +469,13 @@ def convert(md_path: str | Path, title: str | None = None) -> str:
     doc_id = doc["documentId"]
     doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
     print(f"      {doc_url}")
+    docs.documents().batchUpdate(
+        documentId=doc_id,
+        body={"requests": [{"updateDocumentStyle": {
+            "documentStyle": {"documentFormat": {"documentMode": "PAGELESS"}},
+            "fields": "documentFormat.documentMode",
+        }}]},
+    ).execute()
 
     print("[4/5] Building document...")
     builder = DocBuilder(docs, doc_id)

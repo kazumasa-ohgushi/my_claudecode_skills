@@ -119,7 +119,7 @@ def parse_inline(text: str) -> list[tuple[str, bool, bool]]:
 
 def _is_special(line: str) -> bool:
     return bool(
-        line.startswith(("#", "|", "!", "> "))
+        line.startswith(("#", "|", "!", "> ", "```"))
         or re.match(r"^(---+|[-*]\s|\d+\.\s)", line)
     )
 
@@ -181,6 +181,20 @@ def parse_md(md_path: Path) -> list[dict]:
                 items.append(re.sub(r"^\d+\.\s+", "", lines[i]))
                 i += 1
             blocks.append({"type": "ordered_list", "items": items})
+
+        elif line.startswith("```"):
+            lang = line[3:].strip()
+            code_lines: list[str] = []
+            i += 1
+            while i < len(lines) and not lines[i].startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1  # skip closing ```
+            while code_lines and not code_lines[-1].strip():
+                code_lines.pop()
+            if code_lines:
+                blocks.append({"type": "code_block", "language": lang, "text": "\n".join(code_lines)})
 
         elif line.strip() == "":
             i += 1
@@ -334,6 +348,52 @@ class DocBuilder:
         self._para_style(s, self.idx, "NORMAL_TEXT", space_below_pt=4)
         self._apply_inline_styles(spans)
 
+    def code_block(self, text: str) -> None:
+        """Insert a fenced code block with monospace font and gray paragraph shading."""
+        lines = text.split("\n")
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if not lines:
+            return
+        for idx_line, line in enumerate(lines):
+            content = line or " "  # empty lines need at least one char for shading to render
+            s = self.idx
+            self._ins(content + "\n")
+            e = self.idx
+            self.requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": s, "endIndex": e},
+                    "paragraphStyle": {
+                        "namedStyleType": "NORMAL_TEXT",
+                        "spaceAbove": {"magnitude": 6 if idx_line == 0 else 0, "unit": "PT"},
+                        "spaceBelow": {"magnitude": 6 if idx_line == len(lines) - 1 else 0, "unit": "PT"},
+                        "indentStart": {"magnitude": 18, "unit": "PT"},
+                        "indentEnd": {"magnitude": 18, "unit": "PT"},
+                        "indentFirstLine": {"magnitude": 0, "unit": "PT"},
+                        "shading": {
+                            "backgroundColor": {
+                                "color": {"rgbColor": {"red": 0.949, "green": 0.953, "blue": 0.957}}
+                            }
+                        },
+                    },
+                    "fields": "namedStyleType,spaceAbove,spaceBelow,indentStart,indentEnd,indentFirstLine,shading",
+                }
+            })
+            if e - 1 > s:
+                self.requests.append({
+                    "updateTextStyle": {
+                        "range": {"startIndex": s, "endIndex": e - 1},
+                        "textStyle": {
+                            "weightedFontFamily": {"fontFamily": "Courier New"},
+                            "fontSize": {"magnitude": 9, "unit": "PT"},
+                            "foregroundColor": {
+                                "color": {"rgbColor": {"red": 0.133, "green": 0.133, "blue": 0.133}}
+                            },
+                        },
+                        "fields": "weightedFontFamily,fontSize,foregroundColor",
+                    }
+                })
+
     def image(self, url: str, w_pt: int, h_pt: int) -> None:
         """Insert an inline image in its own centered paragraph."""
         s = self.idx
@@ -450,7 +510,18 @@ class DocBuilder:
 # Main conversion function
 # ---------------------------------------------------------------------------
 
-def convert(md_path: str | Path, title: str | None = None) -> str:
+def move_to_folder(drive, doc_id: str, folder_id: str) -> None:
+    """Move a Drive file into the specified folder, removing it from root."""
+    drive.files().update(
+        fileId=doc_id,
+        addParents=folder_id,
+        removeParents="root",
+        fields="id,parents",
+    ).execute()
+    print(f"      Moved to folder: {folder_id}")
+
+
+def convert(md_path: str | Path, title: str | None = None, doc_id: str | None = None, folder_id: str | None = None) -> str:
     md_path = Path(md_path)
     if not md_path.exists():
         sys.exit(f"File not found: {md_path}")
@@ -464,11 +535,33 @@ def convert(md_path: str | Path, title: str | None = None) -> str:
     blocks = parse_md(md_path)
     print(f"      {len(blocks)} blocks found")
 
-    print(f"[3/5] Creating Google Doc: {title!r}")
-    doc = docs.documents().create(body={"title": title}).execute()
-    doc_id = doc["documentId"]
-    doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
-    print(f"      {doc_url}")
+    doc_url: str
+    if doc_id:
+        print(f"[3/5] Opening existing Google Doc: {doc_id!r}")
+        try:
+            existing = docs.documents().get(documentId=doc_id).execute()
+            print(f"      Found: {existing.get('title', '(untitled)')!r}")
+            doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+            print(f"      {doc_url}")
+            content = existing.get("body", {}).get("content", [])
+            end_index = content[-1]["endIndex"] if content else 2
+            if end_index > 2:
+                print("      Clearing existing content...")
+                docs.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={"requests": [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": end_index - 1}}}]},
+                ).execute()
+        except Exception:
+            print(f"      Not found — creating new document: {title!r}")
+            doc_id = None
+
+    if not doc_id:
+        print(f"[3/5] Creating Google Doc: {title!r}")
+        doc = docs.documents().create(body={"title": title}).execute()
+        doc_id = doc["documentId"]
+        doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+        print(f"      {doc_url}")
+
     docs.documents().batchUpdate(
         documentId=doc_id,
         body={"requests": [{"updateDocumentStyle": {
@@ -507,6 +600,10 @@ def convert(md_path: str | Path, title: str | None = None) -> str:
         elif btype == "table":
             print(f"  [tbl] {len(block['rows'])} rows × {max(len(r) for r in block['rows'])} cols")
             builder.table(block["rows"])
+        elif btype == "code_block":
+            n_lines = block["text"].count("\n") + 1
+            print(f"  [code] {block['language'] or 'plain'} ({n_lines} lines)")
+            builder.code_block(block["text"])
         # hr: intentionally skipped
 
     print("[5/5] Flushing final requests...")
@@ -514,6 +611,10 @@ def convert(md_path: str | Path, title: str | None = None) -> str:
 
     # Images are now embedded in the doc — delete the temporary Drive files
     delete_drive_files(drive, uploaded_file_ids)
+
+    if folder_id:
+        print(f"[6/6] Moving to folder...")
+        move_to_folder(drive, doc_id, folder_id)
 
     print(f"\nDone! {doc_url}")
     return doc_url
@@ -527,5 +628,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert a Markdown file to a Google Doc")
     parser.add_argument("md_file", help="Path to the .md file")
     parser.add_argument("--title", default=None, help="Google Doc title (default: filename stem)")
+    parser.add_argument("--doc-id", default=None, help="Existing Google Doc ID to overwrite (creates new if not found)")
+    parser.add_argument("--folder-id", default=None, help="Google Drive folder ID to move the doc into after creation")
     args = parser.parse_args()
-    convert(args.md_file, args.title)
+    convert(args.md_file, args.title, args.doc_id, args.folder_id)

@@ -326,6 +326,9 @@ class DocBuilder:
         s = self.idx
         self._ins(text + "\n")
         self._para_style(s, self.idx, f"HEADING_{level}")
+        if level <= 2:
+            # HEADING_1/2's weight depends on the doc's theme — force bold so they stay prominent.
+            self._text_style(s, self.idx - 1, bold=True, code=False)
 
     def paragraph(self, text: str) -> None:
         runs = parse_inline(text)
@@ -413,6 +416,28 @@ class DocBuilder:
                         "fields": "weightedFontFamily,fontSize,foregroundColor",
                     }
                 })
+
+    def horizontal_rule(self) -> None:
+        """Render `---` as a horizontal line via an empty paragraph with a bottom border."""
+        s = self.idx
+        self._ins("\n")
+        self.requests.append({
+            "updateParagraphStyle": {
+                "range": {"startIndex": s, "endIndex": self.idx},
+                "paragraphStyle": {
+                    "namedStyleType": "NORMAL_TEXT",
+                    "borderBottom": {
+                        "color": {"color": {"rgbColor": {"red": 0.7, "green": 0.7, "blue": 0.7}}},
+                        "width": {"magnitude": 1, "unit": "PT"},
+                        "padding": {"magnitude": 4, "unit": "PT"},
+                        "dashStyle": "SOLID",
+                    },
+                    "spaceAbove": {"magnitude": 6, "unit": "PT"},
+                    "spaceBelow": {"magnitude": 6, "unit": "PT"},
+                },
+                "fields": "namedStyleType,borderBottom,spaceAbove,spaceBelow",
+            }
+        })
 
     def image(self, url: str, w_pt: int, h_pt: int) -> None:
         """Insert an inline image in its own centered paragraph."""
@@ -624,7 +649,8 @@ def convert(md_path: str | Path, title: str | None = None, doc_id: str | None = 
             n_lines = block["text"].count("\n") + 1
             print(f"  [code] {block['language'] or 'plain'} ({n_lines} lines)")
             builder.code_block(block["text"])
-        # hr: intentionally skipped
+        elif btype == "hr":
+            builder.horizontal_rule()
 
     print("[5/5] Flushing final requests...")
     builder.flush()

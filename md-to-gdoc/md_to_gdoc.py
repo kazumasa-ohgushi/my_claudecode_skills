@@ -80,11 +80,26 @@ def upload_image(drive, path: Path) -> tuple[str, str, int, int]:
 
 
 def delete_drive_files(drive, file_ids: list[str]) -> None:
-    """Delete Drive files by ID (call after images are embedded in the doc)."""
+    """Delete Drive files by ID (call after images are embedded in the doc).
+
+    Errors on individual files are caught and reported so a single missing
+    file (e.g., already deleted in a prior run) doesn't abort cleanup of
+    the remaining files.
+    """
+    deleted = 0
+    failed: list[tuple[str, str]] = []
     for fid in file_ids:
-        drive.files().delete(fileId=fid).execute()
-    if file_ids:
-        print(f"    Deleted {len(file_ids)} temporary Drive file(s)")
+        try:
+            drive.files().delete(fileId=fid).execute()
+            deleted += 1
+        except Exception as e:  # noqa: BLE001
+            failed.append((fid, str(e).splitlines()[0] if str(e) else type(e).__name__))
+    if deleted:
+        print(f"    Deleted {deleted} temporary Drive file(s)")
+    if failed:
+        print(f"    Skipped {len(failed)} file(s) that could not be deleted:")
+        for fid, msg in failed:
+            print(f"      - {fid}: {msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +158,9 @@ def parse_md(md_path: Path) -> list[dict]:
 
     while i < len(lines):
         line = lines[i]
+        prev_i = i
 
-        if m := re.match(r"^(#{1,3})\s+(.+)", line):
+        if m := re.match(r"^(#{1,6})\s+(.+)", line):
             blocks.append({"type": "heading", "level": len(m.group(1)), "text": m.group(2).strip()})
             i += 1
 
@@ -206,6 +222,10 @@ def parse_md(md_path: Path) -> list[dict]:
                 i += 1
             if para:
                 blocks.append({"type": "paragraph", "text": " ".join(para)})
+
+        if i == prev_i:
+            print(f"  [WARN] parse_md: unhandled line at {i}: {lines[i]!r} — skipping", flush=True)
+            i += 1
 
     return blocks
 

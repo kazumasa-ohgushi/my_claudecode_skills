@@ -52,7 +52,7 @@ When this skill is invoked:
 
 | Element | Syntax |
 |---------|--------|
-| Headings | `# H1`, `## H2`, `### H3` |
+| Headings | `# H1` through `###### H6` |
 | Bold | `**text**` |
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |

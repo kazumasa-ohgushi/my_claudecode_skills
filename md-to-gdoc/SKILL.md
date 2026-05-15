@@ -1,5 +1,9 @@
 ---
-disable-model-invocation: true
+name: md-to-gdoc
+description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Supports headings, tables, code blocks, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are uploaded to Drive temporarily, embedded inline, then deleted. Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
+argument-hint: "<path/to/file.md> [--title TITLE] [--doc-id DOC_ID] [--folder-id FOLDER_ID]"
+last_verified: 2026-05-15
+owner: Kazumasa Ohgushi
 ---
 # md-to-gdoc: Convert Markdown to Google Doc
 
@@ -38,13 +42,16 @@ When this skill is invoked:
 2. **Locate the Python script** — it is bundled alongside this SKILL.md file:
    Use Glob to find `md_to_gdoc.py` by searching `**/.claude/skills/md-to-gdoc/md_to_gdoc.py` in the home directory, or locate it relative to this SKILL.md's own path.
 
-3. **Run the script** using an available Python 3.12+ interpreter.
+3. **If `--doc-id` is provided, confirm the overwrite with the user before running anything.**
+   The script clears all existing content from the target Google Doc before re-rendering — this is destructive and not reversible from inside the script. You MUST ask the user to confirm via AskUserQuestion, showing them the doc URL (`https://docs.google.com/document/d/<DOC_ID>/edit`) and the Markdown source path. Do not invoke the script until the user explicitly confirms. If they decline, stop and report that nothing was changed.
+
+4. **Run the script** using an available Python 3.12+ interpreter.
    Check the user's CLAUDE.md for their configured Python environment. If none is specified, fall back to `python3`:
    ```bash
    python3 /absolute/path/to/md_to_gdoc.py <absolute_path_to_md> [--title "Title"] [--doc-id DOC_ID]
    ```
 
-4. **Report the result** to the user:
+5. **Report the result** to the user:
    - The Google Doc URL printed by the script
    - Confirmation that temporary Drive images were deleted
 

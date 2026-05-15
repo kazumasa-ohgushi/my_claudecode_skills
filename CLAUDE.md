@@ -9,7 +9,7 @@ A collection of Claude Code skills the user authors and publishes. Each top-leve
 ## Skill layout convention
 
 Each skill directory contains three files:
-- `SKILL.md` — front-matter (`disable-model-invocation: true`) plus the prompt Claude reads when the slash command fires. Includes the "What You Must Do" steps so the model knows how to invoke the script.
+- `SKILL.md` — front-matter (`name`, `description`, `argument-hint`, `last_verified`, `owner`) plus the prompt Claude reads when the slash command fires. Includes the "What You Must Do" steps so the model knows how to invoke the script.
 - `README.md` — user-facing install + usage docs (referenced by the curl URLs end users run).
 - `<skill>.py` — the actual implementation script. Skills assume Python 3.12+ and are invoked with `python3 <abs_path_to_script> ...`.
 

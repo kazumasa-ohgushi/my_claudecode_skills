@@ -619,44 +619,47 @@ def convert(md_path: str | Path, title: str | None = None, doc_id: str | None = 
     builder = DocBuilder(docs, doc_id)
     uploaded_file_ids: list[str] = []
 
-    for block in blocks:
-        btype = block["type"]
-        if btype == "heading":
-            builder.heading(block["text"], block["level"])
-        elif btype == "paragraph":
-            builder.paragraph(block["text"])
-        elif btype == "quote":
-            builder.quote(block["text"])
-        elif btype == "list":
-            for item in block["items"]:
-                builder.list_item(item)
-        elif btype == "ordered_list":
-            for item in block["items"]:
-                builder.list_item(item, ordered=True)
-        elif btype == "image":
-            img_path: Path = block["path"]
-            if img_path.exists():
-                print(f"  [img] {img_path.name}")
-                url, file_id, w, h = upload_image(drive, img_path)
-                uploaded_file_ids.append(file_id)
-                builder.image(url, w, h)
-            else:
-                print(f"  [WARN] Image not found: {img_path}")
-        elif btype == "table":
-            print(f"  [tbl] {len(block['rows'])} rows × {max(len(r) for r in block['rows'])} cols")
-            builder.table(block["rows"])
-        elif btype == "code_block":
-            n_lines = block["text"].count("\n") + 1
-            print(f"  [code] {block['language'] or 'plain'} ({n_lines} lines)")
-            builder.code_block(block["text"])
-        elif btype == "hr":
-            builder.horizontal_rule()
+    try:
+        for block in blocks:
+            btype = block["type"]
+            if btype == "heading":
+                builder.heading(block["text"], block["level"])
+            elif btype == "paragraph":
+                builder.paragraph(block["text"])
+            elif btype == "quote":
+                builder.quote(block["text"])
+            elif btype == "list":
+                for item in block["items"]:
+                    builder.list_item(item)
+            elif btype == "ordered_list":
+                for item in block["items"]:
+                    builder.list_item(item, ordered=True)
+            elif btype == "image":
+                img_path: Path = block["path"]
+                if img_path.exists():
+                    print(f"  [img] {img_path.name}")
+                    url, file_id, w, h = upload_image(drive, img_path)
+                    uploaded_file_ids.append(file_id)
+                    builder.image(url, w, h)
+                else:
+                    print(f"  [WARN] Image not found: {img_path}")
+            elif btype == "table":
+                print(f"  [tbl] {len(block['rows'])} rows × {max(len(r) for r in block['rows'])} cols")
+                builder.table(block["rows"])
+            elif btype == "code_block":
+                n_lines = block["text"].count("\n") + 1
+                print(f"  [code] {block['language'] or 'plain'} ({n_lines} lines)")
+                builder.code_block(block["text"])
+            elif btype == "hr":
+                builder.horizontal_rule()
 
-    print("[5/5] Flushing final requests...")
-    builder.flush()
-
-    # Images are now embedded in the doc — delete the temporary Drive files
-    delete_drive_files(drive, uploaded_file_ids)
+        print("[5/5] Flushing final requests...")
+        builder.flush()
+    finally:
+        # Cleanup must run even if the build raises mid-way, so the
+        # public-read Drive uploads are not left behind.
+        if uploaded_file_ids:
+            delete_drive_files(drive, uploaded_file_ids)
 
     if folder_id:
         print(f"[6/6] Moving to folder...")

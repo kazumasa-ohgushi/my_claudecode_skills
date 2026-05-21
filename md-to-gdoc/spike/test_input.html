@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>HTML Spike — md-to-gdoc fidelity test</title></head><body><h1>H1: Spike Test Document</h1>
+<p>This is a paragraph with <strong>bold text</strong> and <code>inline code</code> to verify inline formatting renders correctly after Drive's HTML→Doc conversion.</p>
+<h2>H2: Section heading</h2>
+<h3>H3: Subsection</h3>
+<h4>H4: Deeper heading</h4>
+<p>A second paragraph follows the heading.</p>
+<h2>H2: Bullet list</h2>
+<ul>
+<li>First item</li>
+<li>Second item with <strong>bold inline</strong></li>
+<li>Third item with <code>inline code</code>
+<ul>
+<li>Nested bullet (whether nesting survives is interesting)</li>
+</ul>
+</li>
+</ul>
+<h2>H2: Ordered list</h2>
+<ol>
+<li>One</li>
+<li>Two with <strong>bold</strong></li>
+<li>Three</li>
+</ol>
+<h2>H2: Blockquote</h2>
+<blockquote>
+<p>This is a blockquote. It should render with an indent or a left bar.
+Continuation line in the same quote.</p>
+</blockquote>
+<h2>H2: Code block</h2>
+<pre><code class="language-python">def hello(name: str) -&gt; str:
+    &quot;&quot;&quot;Greet the caller.&quot;&quot;&quot;
+    return f&quot;Hello, {name}!&quot;
+
+
+if __name__ == &quot;__main__&quot;:
+    print(hello(&quot;world&quot;))
+</code></pre>
+<h2>H2: Horizontal rule</h2>
+<p>Above the line.</p>
+<hr />
+<p>Below the line.</p>
+<h2>H2: Table</h2>
+<table>
+<thead>
+<tr>
+<th>Column A</th>
+<th>Column B</th>
+<th>Column C</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a1</td>
+<td>b1</td>
+<td><strong>bold c1</strong></td>
+</tr>
+<tr>
+<td>a2</td>
+<td><code>code b2</code></td>
+<td>c2</td>
+</tr>
+<tr>
+<td>a3</td>
+<td>longer text</td>
+<td>c3</td>
+</tr>
+</tbody>
+</table>
+<h2>H2: Image</h2>
+<p><img src="data:image/png;base64,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EmiAoPI7ewPQVkXNqpg3pbaquLO3QNdiggYISqABghJogKAEGiAogQYISqABghJogKAEGiAogQYISqABghJogKAEGiAogQYISqABghJogKAEGiAogQYISqABghJogKAEGiAogQYISqABghJogKAEGiAogQYISqABghJogKAEGiAogQYIKj/thipqVqWQaquKO3sLwJ7DBA0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQAg0QlEADBCXQAEEJNEBQmYYNm770i0svXJT7Ydk9w3bclgD2BB0vpAkaICiBBghKoAGCEmiAoAQaICiBBghKoAGCEmiAoAQaICiBBghKoAGCEmiAoAQaICiBBghKoAGCEmiAoPJ37PdSA7CjmKABghJogD3x/yQEYOcxQQMEJdAAQQk0QFACDRCUQAMEJdAAQQk0QFACDRCUQAMEJdAAQQk0QFACDRCUQAMEJdAAQQk0QFACDRCUQAMEJdAAKaZ/AQBRUVYAzOrzAAAAAElFTkSuQmCC" alt="Sample chart" /></p>
+<p>A paragraph following the image.</p>
+</body></html>

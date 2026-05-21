@@ -1,13 +1,13 @@
 ---
 name: md-to-gdoc
-description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Supports headings, tables, code blocks, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are uploaded to Drive temporarily, embedded inline, then deleted. Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
+description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Supports headings, tables, code blocks, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are inlined as base64 data URIs (no separate Drive uploads). Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
 argument-hint: "<path/to/file.md> [--title TITLE] [--doc-id DOC_ID] [--folder-id FOLDER_ID]"
-last_verified: 2026-05-15
+last_verified: 2026-05-21
 owner: Kazumasa Ohgushi
 ---
 # md-to-gdoc: Convert Markdown to Google Doc
 
-Convert a local Markdown file (with embedded PNG images) to a Google Document. Images are automatically uploaded, embedded, and then deleted from Drive.
+Convert a local Markdown file (with embedded PNG images) to a Google Document. Images are inlined as base64 data URIs inside the HTML upload, so no temporary Drive files are created.
 
 ## Prerequisites
 
@@ -19,7 +19,8 @@ gcloud auth application-default login \
 
 ### 2. Python packages (Python 3.12+)
 ```bash
-pip install google-auth google-auth-httplib2 google-api-python-client Pillow
+pip install google-auth google-auth-httplib2 google-api-python-client \
+            Pillow markdown-it-py linkify-it-py
 ```
 
 ## Usage
@@ -30,8 +31,8 @@ pip install google-auth google-auth-httplib2 google-api-python-client Pillow
 
 - `<path/to/file.md>` — path to the Markdown file (absolute or relative to CWD)
 - `--title` — optional document title (defaults to the filename stem)
-- `--doc-id` — optional Google Doc ID to overwrite; if the document is not found, a new one is created
-- `--folder-id` — optional Google Drive folder ID to move the doc into after creation (find it in the folder's URL: `https://drive.google.com/drive/folders/<FOLDER_ID>`)
+- `--doc-id` — optional Google Doc ID to overwrite in place; if the document is not found, a new one is created instead
+- `--folder-id` — optional Google Drive folder ID to place the doc in (find it in the folder's URL: `https://drive.google.com/drive/folders/<FOLDER_ID>`)
 
 ## What You Must Do
 
@@ -43,7 +44,7 @@ When this skill is invoked:
    Use Glob to find `md_to_gdoc.py` by searching `**/.claude/skills/md-to-gdoc/md_to_gdoc.py` in the home directory, or locate it relative to this SKILL.md's own path.
 
 3. **If `--doc-id` is provided, confirm the overwrite with the user before running anything.**
-   The script clears all existing content from the target Google Doc before re-rendering — this is destructive and not reversible from inside the script. You MUST ask the user to confirm via AskUserQuestion, showing them the doc URL (`https://docs.google.com/document/d/<DOC_ID>/edit`) and the Markdown source path. Do not invoke the script until the user explicitly confirms. If they decline, stop and report that nothing was changed.
+   The script replaces all content of the target Google Doc in place — this is destructive and not reversible. You MUST ask the user to confirm via AskUserQuestion, showing them the doc URL (`https://docs.google.com/document/d/<DOC_ID>/edit`) and the Markdown source path. Do not invoke the script until the user explicitly confirms. If they decline, stop and report that nothing was changed.
 
 4. **Run the script** using an available Python 3.12+ interpreter.
    Check the user's CLAUDE.md for their configured Python environment. If none is specified, fall back to `python3`:
@@ -51,9 +52,7 @@ When this skill is invoked:
    python3 /absolute/path/to/md_to_gdoc.py <absolute_path_to_md> [--title "Title"] [--doc-id DOC_ID]
    ```
 
-5. **Report the result** to the user:
-   - The Google Doc URL printed by the script
-   - Confirmation that temporary Drive images were deleted
+5. **Report the result** to the user with the Google Doc URL printed by the script.
 
 ## Supported Markdown Elements
 
@@ -64,16 +63,19 @@ When this skill is invoked:
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
 | Images | `![alt](relative/path/to/image.png)` |
-| Tables | GFM pipe tables |
+| Tables | GFM pipe tables (header row rendered bold) |
 | Blockquotes | `> text` |
 | Bullet lists | `- item` |
 | Ordered lists | `1. item` |
 | Horizontal rule | `---` |
+| Strikethrough | `~~text~~` |
+| Autolinks | bare URLs |
 
 **Image paths** in the Markdown must be relative to the Markdown file's directory.
 
 ## Notes
 
 - The document is created in pageless format automatically.
-- Images are uploaded temporarily to Google Drive to embed them in the Doc, then immediately deleted. No Drive clutter.
-- The document is created in the authenticated user's Drive root.
+- Images are embedded as base64 data URIs inside the HTML upload — no temporary Drive files, no public-link window.
+- Wide images are capped at the pageless content width (~665pt); height scales proportionally.
+- New documents land in the authenticated user's Drive root unless `--folder-id` is given.

@@ -1,13 +1,13 @@
 ---
 name: md-to-gdoc
-description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Supports headings, tables, code blocks, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are inlined as base64 data URIs (no separate Drive uploads). Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
+description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Fenced code blocks become native Google Docs code blocks (Insert → Building blocks → Code block) with language auto-detection and syntax highlighting. Also supports headings, tables, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are inlined as base64 data URIs (no separate Drive uploads). Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
 argument-hint: "<path/to/file.md> [--title TITLE] [--doc-id DOC_ID] [--folder-id FOLDER_ID]"
-last_verified: 2026-05-21
+last_verified: 2026-07-29
 owner: Kazumasa Ohgushi
 ---
 # md-to-gdoc: Convert Markdown to Google Doc
 
-Convert a local Markdown file (with embedded PNG images) to a Google Document. Images are inlined as base64 data URIs inside the HTML upload, so no temporary Drive files are created.
+Convert a local Markdown file (with embedded PNG images) to a Google Document via Drive's native markdown import. Fenced code blocks are rendered as real Google Docs code blocks (the Insert → Building blocks → Code block widget) with language auto-detection and syntax highlighting. Images are inlined as base64 data URIs inside the markdown upload, so no temporary Drive files are created.
 
 ## Prerequisites
 
@@ -19,8 +19,7 @@ gcloud auth application-default login \
 
 ### 2. Python packages (Python 3.12+)
 ```bash
-pip install google-auth google-auth-httplib2 google-api-python-client \
-            Pillow markdown-it-py linkify-it-py
+pip install google-auth google-auth-httplib2 google-api-python-client Pillow
 ```
 
 ## Usage
@@ -62,6 +61,7 @@ When this skill is invoked:
 | Bold | `**text**` |
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
+| Code blocks | ` ```lang ` fences → native Docs code block widget |
 | Images | `![alt](relative/path/to/image.png)` |
 | Tables | GFM pipe tables (header row rendered bold) |
 | Blockquotes | `> text` |
@@ -76,6 +76,13 @@ When this skill is invoked:
 ## Notes
 
 - The document is created in pageless format automatically.
-- Images are embedded as base64 data URIs inside the HTML upload — no temporary Drive files, no public-link window.
-- Wide images are capped at the pageless content width (~665pt); height scales proportionally.
+- Fenced code blocks become native Google Docs code blocks (language chip +
+  copy button + syntax highlighting). The language comes from the fence info
+  string (` ```python `, ` ```sql `, ` ```bash `, …) via the importer's
+  auto-detection; unrecognized languages fall back to an unlabeled block.
+- Images are embedded as base64 data URIs inside the markdown upload — no
+  temporary Drive files, no public-link window.
+- Images wider than the pageless content width (~665pt ≈ 886px) are
+  **pixel-downscaled** before upload (the markdown importer offers no
+  display-size control), so very high-res screenshots lose some zoom detail.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.

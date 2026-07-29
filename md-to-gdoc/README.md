@@ -1,8 +1,8 @@
 # md-to-gdoc
 
-A Claude Code skill that converts a local Markdown file (with embedded PNG images) to a Google Document.
+A Claude Code skill that converts a local Markdown file (with embedded PNG images) to a Google Document via Drive's native markdown import.
 
-Images are inlined as base64 data URIs inside the HTML upload, so there are no temporary Drive files and no public-link window.
+Fenced code blocks are rendered as native Google Docs code blocks (Insert → Building blocks → Code block) with language auto-detection and syntax highlighting. Images are inlined as base64 data URIs inside the markdown upload, so there are no temporary Drive files and no public-link window.
 
 ## Installation
 
@@ -20,8 +20,7 @@ Once placed in `~/.claude/skills/`, the skill is available as `/md-to-gdoc` acro
 **2. Install Python dependencies (Python 3.12+):**
 
 ```bash
-pip install google-auth google-auth-httplib2 google-api-python-client \
-            Pillow markdown-it-py linkify-it-py
+pip install google-auth google-auth-httplib2 google-api-python-client Pillow
 ```
 
 **3. Authenticate with Google (one-time setup, adds Drive scope to ADC):**
@@ -56,6 +55,7 @@ In a Claude Code session:
 | Bold | `**text**` |
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
+| Code blocks | ` ```lang ` fences → native Docs code block widget |
 | Images | `![alt](relative/path/to/image.png)` |
 | Tables | GFM pipe tables (header row rendered bold) |
 | Blockquotes | `> text` |
@@ -68,6 +68,7 @@ In a Claude Code session:
 ## Notes
 
 - The document is created in pageless format automatically.
-- Wide images are capped at the pageless content width (~665pt); height scales proportionally.
+- Fenced code blocks become native Google Docs code blocks (language chip + copy button + syntax highlighting), driven by the fence info string (` ```python `, ` ```sql `, ` ```bash `, …).
+- Images wider than the pageless content width (~665pt ≈ 886px) are pixel-downscaled before upload; height scales proportionally.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.
 - To update the skill, re-run the `curl` commands in step 1.

@@ -59,6 +59,11 @@ import google.auth.transport.requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
+try:
+    import numpy as np
+except ImportError:  # gamma-correct resize degrades to plain LANCZOS
+    np = None
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -104,6 +109,38 @@ def authenticate():
 # Markdown preprocessing
 # ---------------------------------------------------------------------------
 
+def _resize_linear_light(im: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """LANCZOS resize in linear-light space. Resizing gamma-encoded sRGB
+    directly overweights dark pixels, so thin dark strokes (chart text,
+    axis lines) come out visibly bolder; converting to linear light first
+    avoids that. Falls back to plain LANCZOS when numpy is unavailable."""
+    if np is None or im.mode not in ("RGB", "RGBA", "L"):
+        return im.resize(size, Image.LANCZOS)
+
+    arr = np.asarray(im).astype(np.float32) / 255.0
+    if arr.ndim == 2:
+        arr = arr[:, :, None]
+    srgb, alpha = arr[:, :, :3], arr[:, :, 3:]
+
+    lin = np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+    channels = [
+        np.asarray(Image.fromarray(lin[:, :, c]).resize(size, Image.LANCZOS))
+        for c in range(lin.shape[2])
+    ]
+    if alpha.shape[2]:  # alpha is already linear; resize as-is
+        channels.append(np.asarray(
+            Image.fromarray(alpha[:, :, 0]).resize(size, Image.LANCZOS)
+        ))
+    out = np.stack(channels, axis=-1).clip(0.0, 1.0)
+    out[:, :, :3] = np.where(
+        out[:, :, :3] <= 0.0031308,
+        out[:, :, :3] * 12.92,
+        1.055 * out[:, :, :3] ** (1 / 2.4) - 0.055,
+    )
+    result = Image.fromarray((out * 255 + 0.5).astype(np.uint8).squeeze())
+    return result.convert(im.mode) if result.mode != im.mode else result
+
+
 def _encode_image(img_path: Path) -> tuple[str, int, int]:
     """Return (data_uri, width_px, height_px), downscaling to
     MAX_IMG_WIDTH_PX if wider. The importer has no display-size control,
@@ -116,7 +153,9 @@ def _encode_image(img_path: Path) -> tuple[str, int, int]:
         if iw > MAX_IMG_WIDTH_PX:
             new_w = MAX_IMG_WIDTH_PX
             new_h = max(1, int(round(ih * MAX_IMG_WIDTH_PX / iw)))
-            im = im.resize((new_w, new_h), Image.LANCZOS)
+            if im.mode not in ("RGB", "RGBA", "L"):
+                im = im.convert("RGBA" if "transparency" in im.info else "RGB")
+            im = _resize_linear_light(im, (new_w, new_h))
             buf = io.BytesIO()
             if mime == "image/jpeg":
                 im.convert("RGB").save(buf, format="JPEG", quality=90)

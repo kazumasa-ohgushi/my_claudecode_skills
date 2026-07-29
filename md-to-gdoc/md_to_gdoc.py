@@ -171,6 +171,21 @@ def _encode_image(img_path: Path) -> tuple[str, int, int]:
     return f"data:{mime};base64,{b64}", iw, ih
 
 
+# Fenced code blocks per CommonMark, loosened for safety: any indentation
+# (fences inside lists are indented), 3+ fence chars, closing fence of the
+# same char at least as long as the opener. Backticks and tildes are matched
+# separately so a ``` block can't be closed by ~~~.
+_FENCE_RES = [
+    re.compile(
+        r"^[ \t]*(?P<f>" + ch + r"{3,})[^\n]*\n"  # opening fence + info string
+        r"(?:.*\n)*?"                              # body (non-greedy)
+        r"[ \t]*(?P=f)" + ch + r"*[ \t]*$",        # closing fence, >= opener
+        re.MULTILINE,
+    )
+    for ch in ("`", "~")
+]
+
+
 def _mask_code_regions(md_text: str):
     """Mask fenced code blocks and inline code spans so image rewriting
     never touches example markdown inside them. Returns (masked, restore)."""
@@ -180,8 +195,9 @@ def _mask_code_regions(md_text: str):
         stash.append(m.group(0))
         return f"\x00CODE{len(stash) - 1}\x00"
 
-    masked = re.sub(r"^(```|~~~).*?^\1\s*$", mask, md_text,
-                    flags=re.DOTALL | re.MULTILINE)
+    masked = md_text
+    for fence_re in _FENCE_RES:
+        masked = fence_re.sub(mask, masked)
     masked = re.sub(r"`[^`\n]+`", mask, masked)
 
     def restore(text: str) -> str:
@@ -210,13 +226,22 @@ def inline_local_images(md_text: str, base_dir: Path) -> str:
         return data_uri
 
     def repl_md(m: re.Match) -> str:
-        alt, src = m.group(1), m.group(2)
+        alt, dest, title = m.group(1), m.group(2), m.group(3) or ""
+        src = dest[1:-1] if dest.startswith("<") else dest  # <...> form
         if not is_local(src):
             return m.group(0)
         data_uri = encode_or_none(src)
-        return m.group(0) if data_uri is None else f"![{alt}]({data_uri})"
+        return m.group(0) if data_uri is None else f"![{alt}]({data_uri}{title})"
 
-    md_text = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", repl_md, md_text)
+    # Destination per CommonMark: either <...> (spaces allowed) or a bare
+    # path with one level of balanced parens, plus an optional "title".
+    md_text = re.sub(
+        r"!\[([^\]]*)\]"
+        r"\(\s*(<[^<>\n]*>|(?:[^()\s]|\([^()\s]*\))+)"
+        r"(\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)",
+        repl_md,
+        md_text,
+    )
 
     def repl_html(m: re.Match) -> str:
         src = m.group(1)

@@ -70,6 +70,86 @@ CODE_BLOCK_FG = {"red": 0.133, "green": 0.133, "blue": 0.133}
 CODE_BLOCK_BG = {"red": 0.949, "green": 0.953, "blue": 0.957}
 BQ_BAR = {"red": 0.6, "green": 0.6, "blue": 0.6}
 
+# Named-style preset captured from a Google-native markdown import
+# (documents.get -> namedStyles of a Doc created via Drive text/markdown
+# conversion). Applying it document-wide reproduces the official importer's
+# typography: Arial 11 / 115% line spacing body, 20/16/14pt regular-weight
+# headings with gray H3-H6, etc. Fields absent from an entry are listed in
+# the field mask anyway, resetting them to the Docs default (e.g. heading
+# bold=True from the HTML importer is cleared).
+NAMED_STYLE_PRESET: dict[str, dict] = {'NORMAL_TEXT': {'textStyle': {'weightedFontFamily': {'fontFamily': 'Arial',
+                                                      'weight': 400},
+                               'fontSize': {'magnitude': 11, 'unit': 'PT'},
+                               'bold': False,
+                               'foregroundColor': {'color': {'rgbColor': {}}}},
+                 'paragraphStyle': {'lineSpacing': 115,
+                                    'spaceAbove': {'unit': 'PT'},
+                                    'spaceBelow': {'unit': 'PT'}}},
+ 'HEADING_1': {'textStyle': {'fontSize': {'magnitude': 20, 'unit': 'PT'}},
+               'paragraphStyle': {'spaceAbove': {'magnitude': 20,
+                                                 'unit': 'PT'},
+                                  'spaceBelow': {'magnitude': 6,
+                                                 'unit': 'PT'}}},
+ 'HEADING_2': {'textStyle': {'fontSize': {'magnitude': 16, 'unit': 'PT'},
+                             'bold': False},
+               'paragraphStyle': {'spaceAbove': {'magnitude': 18,
+                                                 'unit': 'PT'},
+                                  'spaceBelow': {'magnitude': 6,
+                                                 'unit': 'PT'}}},
+ 'HEADING_3': {'textStyle': {'fontSize': {'magnitude': 14, 'unit': 'PT'},
+                             'bold': False,
+                             'foregroundColor': {'color': {'rgbColor': {'red': 0.2627451,
+                                                                        'green': 0.2627451,
+                                                                        'blue': 0.2627451}}}},
+               'paragraphStyle': {'spaceAbove': {'magnitude': 16,
+                                                 'unit': 'PT'},
+                                  'spaceBelow': {'magnitude': 4,
+                                                 'unit': 'PT'}}},
+ 'HEADING_4': {'textStyle': {'fontSize': {'magnitude': 12, 'unit': 'PT'},
+                             'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
+                                                                        'green': 0.4,
+                                                                        'blue': 0.4}}}},
+               'paragraphStyle': {'spaceAbove': {'magnitude': 14,
+                                                 'unit': 'PT'},
+                                  'spaceBelow': {'magnitude': 4,
+                                                 'unit': 'PT'}}},
+ 'HEADING_5': {'textStyle': {'fontSize': {'magnitude': 11, 'unit': 'PT'},
+                             'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
+                                                                        'green': 0.4,
+                                                                        'blue': 0.4}}}},
+               'paragraphStyle': {'spaceAbove': {'magnitude': 12,
+                                                 'unit': 'PT'},
+                                  'spaceBelow': {'magnitude': 4,
+                                                 'unit': 'PT'}}},
+ 'HEADING_6': {'textStyle': {'fontSize': {'magnitude': 11, 'unit': 'PT'},
+                             'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
+                                                                        'green': 0.4,
+                                                                        'blue': 0.4}}}},
+               'paragraphStyle': {'spaceAbove': {'magnitude': 12,
+                                                 'unit': 'PT'},
+                                  'spaceBelow': {'magnitude': 4,
+                                                 'unit': 'PT'}}},
+ 'TITLE': {'textStyle': {'fontSize': {'magnitude': 26, 'unit': 'PT'}},
+           'paragraphStyle': {'spaceAbove': {'unit': 'PT'},
+                              'spaceBelow': {'magnitude': 3,
+                                             'unit': 'PT'}}},
+ 'SUBTITLE': {'textStyle': {'weightedFontFamily': {'fontFamily': 'Arial',
+                                                   'weight': 400},
+                            'fontSize': {'magnitude': 15, 'unit': 'PT'},
+                            'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
+                                                                       'green': 0.4,
+                                                                       'blue': 0.4}}}},
+              'paragraphStyle': {'spaceAbove': {'unit': 'PT'},
+                                 'spaceBelow': {'magnitude': 16,
+                                                'unit': 'PT'}}}}
+
+NAMED_STYLE_FIELDS = (
+    "namedStyleType,"
+    "textStyle.weightedFontFamily,textStyle.fontSize,textStyle.bold,"
+    "textStyle.foregroundColor,"
+    "paragraphStyle.lineSpacing,paragraphStyle.spaceAbove,paragraphStyle.spaceBelow"
+)
+
 
 # ---------------------------------------------------------------------------
 # Authentication
@@ -489,18 +569,16 @@ def build_post_process_requests(doc: dict) -> list[dict]:
 
     requests: list[dict] = []
 
-    # 0. Document-wide 115% line spacing on body text. The HTML importer
-    #    leaves the NORMAL_TEXT named style at 100, which reads cramped;
-    #    115 matches what Docs' own markdown importer produces.
-    requests.append({
-        "updateNamedStyle": {
-            "namedStyle": {
-                "namedStyleType": "NORMAL_TEXT",
-                "paragraphStyle": {"lineSpacing": 115},
-            },
-            "fields": "namedStyleType,paragraphStyle.lineSpacing",
-        }
-    })
+    # 0. Port the official markdown importer's named styles document-wide
+    #    (fonts, sizes, weights, colors, line spacing, heading margins).
+    for style_type, style in NAMED_STYLE_PRESET.items():
+        named_style = {"namedStyleType": style_type, **style}
+        requests.append({
+            "updateNamedStyle": {
+                "namedStyle": named_style,
+                "fields": NAMED_STYLE_FIELDS,
+            }
+        })
 
     # 1. Style-only requests first.
     requests.extend(_paragraph_spacing_requests(doc))

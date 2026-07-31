@@ -76,7 +76,14 @@ When this skill is invoked:
 ## Notes
 
 - The document is created in pageless format automatically.
-- Body text uses 115% line spacing; code (inline and blocks) renders in Roboto Mono.
+- Typography mirrors Google's own markdown importer: its full named-style
+  set (Arial 11 body at 115% line spacing, 20/16/14pt regular-weight
+  headings) is applied document-wide, blank lines in the source survive as
+  empty paragraphs, and code renders in Roboto Mono.
+- Unordered lists render as "-" dash items with hanging indent (matching
+  the markdown importer's look). They are visually identical to real lists
+  but are plain paragraphs — Docs won't auto-continue bullets when editing
+  them. Ordered lists remain real numbered lists.
 - Images are embedded as base64 data URIs inside the HTML upload — no temporary Drive files, no public-link window. Full resolution is preserved (display width is capped, pixels are not).
 - Wide images are capped at the pageless content width (~665pt); height scales proportionally.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.

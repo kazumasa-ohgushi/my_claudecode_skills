@@ -172,9 +172,103 @@ def authenticate():
 # Markdown → HTML
 # ---------------------------------------------------------------------------
 
+# Indent geometry for dash lists (matches the markdown importer's lists:
+# text at 36pt per level, glyph hanging 18pt to the left).
+LIST_INDENT_PER_LEVEL_PT = 36
+LIST_HANGING_PT = 18
+
+
+def _install_dash_list_renderer(md: MarkdownIt) -> None:
+    """Render unordered lists as '- ' paragraphs with per-level margins,
+    mimicking the markdown importer's dash bullets (its glyphSymbol '-'
+    cannot be created via the API, and the HTML importer ignores CSS
+    list-style-type). Hanging indent is added post-import (the importer
+    honors margin-left but drops text-indent). Ordered lists stay real."""
+
+    def bullet_list_open(self, tokens, idx, options, env):
+        env.setdefault("_list_stack", []).append("ul")
+        return ""
+
+    def bullet_list_close(self, tokens, idx, options, env):
+        env["_list_stack"].pop()
+        return ""
+
+    def ordered_list_open(self, tokens, idx, options, env):
+        env.setdefault("_list_stack", []).append("ol")
+        return self.renderToken(tokens, idx, options)
+
+    def ordered_list_close(self, tokens, idx, options, env):
+        env["_list_stack"].pop()
+        return self.renderToken(tokens, idx, options)
+
+    def list_item_open(self, tokens, idx, options, env):
+        stack = env.get("_list_stack", [])
+        if stack and stack[-1] == "ul":
+            margin = LIST_INDENT_PER_LEVEL_PT * len(stack)
+            return f'<p style="margin-left:{margin}pt">- '
+        return self.renderToken(tokens, idx, options)
+
+    def list_item_close(self, tokens, idx, options, env):
+        stack = env.get("_list_stack", [])
+        if stack and stack[-1] == "ul":
+            return "</p>\n"
+        return self.renderToken(tokens, idx, options)
+
+    md.add_render_rule("bullet_list_open", bullet_list_open)
+    md.add_render_rule("bullet_list_close", bullet_list_close)
+    md.add_render_rule("ordered_list_open", ordered_list_open)
+    md.add_render_rule("ordered_list_close", ordered_list_close)
+    md.add_render_rule("list_item_open", list_item_open)
+    md.add_render_rule("list_item_close", list_item_close)
+
+
 def md_to_html(md_text: str) -> str:
+    """Render markdown to HTML, preserving source blank lines as empty
+    <p></p> paragraphs (Drive's HTML importer keeps them as empty
+    paragraphs — same as Docs' native markdown importer, whose airier
+    layout comes largely from these). Gaps directly after a heading are
+    swallowed, matching the markdown importer. Blank lines before a block
+    also keep <hr> from merging into a following heading on import."""
     md = MarkdownIt("gfm-like")  # tables, strikethrough, linkify
-    return md.render(md_text)
+    _install_dash_list_renderer(md)
+    env: dict = {}
+    tokens = md.parse(md_text, env)
+
+    # Split the token stream into top-level blocks.
+    chunks: list[tuple[int, int]] = []
+    depth = 0
+    start = 0
+    for i, tok in enumerate(tokens):
+        if depth == 0:
+            start = i
+        depth += tok.nesting
+        if depth == 0:
+            chunks.append((start, i))
+
+    # Blank-line gap = consecutive blank source lines directly above each
+    # block. Counting backward from the block's start line is robust
+    # against markdown-it block maps that swallow trailing blanks (lists).
+    lines = md_text.split("\n")
+
+    def blank_gap_above(start_line: int) -> int:
+        gap = 0
+        line = start_line - 1
+        while line >= 0 and not lines[line].strip():
+            gap += 1
+            line -= 1
+        return gap
+
+    parts: list[str] = []
+    first = True
+    prev_was_heading = False
+    for s, e in chunks:
+        block_map = tokens[s].map
+        if block_map and not first and not prev_was_heading:
+            parts.append("<p></p>" * blank_gap_above(block_map[0]))
+        first = False
+        prev_was_heading = tokens[s].type == "heading_open"
+        parts.append(md.renderer.render(tokens[s:e + 1], md.options, env))
+    return "".join(parts)
 
 
 def inject_sentinels(html: str) -> str:
@@ -556,6 +650,46 @@ def _table_header_bold_requests(doc: dict) -> list[dict]:
     return out
 
 
+def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
+    """Give faux dash-list paragraphs their hanging indent (the HTML
+    importer honors margin-left but drops text-indent). Targets paragraphs
+    that start with '- ' and sit at a list indent level."""
+    out: list[dict] = []
+    for elem in doc.get("body", {}).get("content", []):
+        para = elem.get("paragraph")
+        if not para:
+            continue
+        style = para.get("paragraphStyle", {})
+        indent = style.get("indentStart", {}).get("magnitude")
+        if not indent or indent % LIST_INDENT_PER_LEVEL_PT != 0:
+            continue
+        first_run = next(
+            (pe["textRun"]["content"] for pe in para.get("elements", [])
+             if pe.get("textRun")), "",
+        )
+        if not first_run.startswith("- "):
+            continue
+        out.append({
+            "updateParagraphStyle": {
+                "range": {
+                    "startIndex": elem["startIndex"],
+                    "endIndex": elem["endIndex"],
+                },
+                "paragraphStyle": {
+                    "indentFirstLine": {
+                        "magnitude": indent - LIST_HANGING_PT,
+                        "unit": "PT",
+                    },
+                    # real Docs lists collapse inter-item spacing
+                    # (COLLAPSE_LISTS); match that for the faux items
+                    "spaceBelow": {"magnitude": 0, "unit": "PT"},
+                },
+                "fields": "indentFirstLine,spaceBelow",
+            }
+        })
+    return out
+
+
 def build_post_process_requests(doc: dict) -> list[dict]:
     """Build a single batchUpdate body.
 
@@ -586,6 +720,7 @@ def build_post_process_requests(doc: dict) -> list[dict]:
     requests.extend(_table_width_requests(doc))
     requests.extend(_table_cell_padding_requests(doc))
     requests.extend(_table_header_bold_requests(doc))
+    requests.extend(_dash_list_hanging_indent_requests(doc))
 
     # 2. Sentinel-based styling + deletes.
     inline = [(s, e, "inline_code") for s, e in find_sentinel_ranges(

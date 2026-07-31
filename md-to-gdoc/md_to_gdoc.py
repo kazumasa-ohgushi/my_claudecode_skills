@@ -185,17 +185,37 @@ def _install_dash_list_renderer(md: MarkdownIt) -> None:
     list-style-type). Hanging indent is added post-import (the importer
     honors margin-left but drops text-indent). Ordered lists stay real."""
 
-    def bullet_list_open(self, tokens, idx, options, env):
-        env.setdefault("_list_stack", []).append("ul")
+    # env bookkeeping:
+    #   _list_stack — 'ul'/'ol' nesting, drives the indent level
+    #   _item_stack — one entry per open faux (ul) item: whether its
+    #                 faux <p> is currently open. Loose items and nested
+    #                 block content must close it first, otherwise the
+    #                 nested <p>/<ol> auto-closes the faux paragraph and
+    #                 strands the dash on its own line.
+
+    def _margin(env) -> int:
+        return LIST_INDENT_PER_LEVEL_PT * len(env.get("_list_stack", []))
+
+    def _close_open_faux_p(env) -> str:
+        items = env.get("_item_stack", [])
+        if items and items[-1]["p_open"]:
+            items[-1]["p_open"] = False
+            return "</p>\n"
         return ""
+
+    def bullet_list_open(self, tokens, idx, options, env):
+        closer = _close_open_faux_p(env)
+        env.setdefault("_list_stack", []).append("ul")
+        return closer
 
     def bullet_list_close(self, tokens, idx, options, env):
         env["_list_stack"].pop()
         return ""
 
     def ordered_list_open(self, tokens, idx, options, env):
+        closer = _close_open_faux_p(env)
         env.setdefault("_list_stack", []).append("ol")
-        return self.renderToken(tokens, idx, options, env)
+        return closer + self.renderToken(tokens, idx, options, env)
 
     def ordered_list_close(self, tokens, idx, options, env):
         env["_list_stack"].pop()
@@ -204,16 +224,37 @@ def _install_dash_list_renderer(md: MarkdownIt) -> None:
     def list_item_open(self, tokens, idx, options, env):
         stack = env.get("_list_stack", [])
         if stack and stack[-1] == "ul":
-            margin = LIST_INDENT_PER_LEVEL_PT * len(stack)
+            env.setdefault("_item_stack", []).append({"p_open": True})
             # 3 nbsp + space ≈ 12pt gap: lands the text at ~the wrap indent
             # (36pt/level). A real tab is unusable — the web UI and PDF
             # export resolve default tab stops differently.
-            return f'<p style="margin-left:{margin}pt">-&nbsp;&nbsp;&nbsp; '
+            return (f'<p style="margin-left:{_margin(env)}pt">'
+                    "-&nbsp;&nbsp;&nbsp; ")
         return self.renderToken(tokens, idx, options, env)
 
     def list_item_close(self, tokens, idx, options, env):
         stack = env.get("_list_stack", [])
         if stack and stack[-1] == "ul":
+            item = env["_item_stack"].pop()
+            return "</p>\n" if item["p_open"] else ""
+        return self.renderToken(tokens, idx, options, env)
+
+    def paragraph_open(self, tokens, idx, options, env):
+        # Visible paragraphs only occur inside loose items (tight-item
+        # paragraphs are hidden and never reach render rules).
+        stack = env.get("_list_stack", [])
+        if stack and stack[-1] == "ul" and env.get("_item_stack"):
+            item = env["_item_stack"][-1]
+            if item["p_open"]:  # first paragraph: flow into the dash <p>
+                return ""
+            item["p_open"] = True  # continuation paragraph: indented, no dash
+            return f'<p style="margin-left:{_margin(env)}pt">'
+        return self.renderToken(tokens, idx, options, env)
+
+    def paragraph_close(self, tokens, idx, options, env):
+        stack = env.get("_list_stack", [])
+        if stack and stack[-1] == "ul" and env.get("_item_stack"):
+            env["_item_stack"][-1]["p_open"] = False
             return "</p>\n"
         return self.renderToken(tokens, idx, options, env)
 
@@ -223,6 +264,8 @@ def _install_dash_list_renderer(md: MarkdownIt) -> None:
     md.add_render_rule("ordered_list_close", ordered_list_close)
     md.add_render_rule("list_item_open", list_item_open)
     md.add_render_rule("list_item_close", list_item_close)
+    md.add_render_rule("paragraph_open", paragraph_open)
+    md.add_render_rule("paragraph_close", paragraph_close)
 
 
 def md_to_html(md_text: str) -> str:
@@ -302,7 +345,9 @@ def inject_sentinels(html: str) -> str:
     #    Drive may drop).
     def wrap_bq(m: re.Match) -> str:
         inner = m.group(1)
-        inner = re.sub(r"(<p>)", rf"\1{S_BLOCKQUOTE_OPEN}", inner, count=1)
+        # match styled paragraphs too (faux dash-list items carry a
+        # style attribute), or the sentinel pair ends up unbalanced
+        inner = re.sub(r"(<p\b[^>]*>)", rf"\1{S_BLOCKQUOTE_OPEN}", inner, count=1)
         idx = inner.rfind("</p>")
         if idx != -1:
             inner = inner[:idx] + S_BLOCKQUOTE_CLOSE + inner[idx:]

@@ -40,8 +40,7 @@ When this skill is invoked:
 
 1. **Identify the Markdown file path** from the user's argument. Resolve it to an absolute path.
 
-2. **Locate the Python script** — it is bundled alongside this SKILL.md file:
-   Use Glob to find `md_to_gdoc.py` by searching `**/.claude/skills/md-to-gdoc/md_to_gdoc.py` in the home directory, or locate it relative to this SKILL.md's own path.
+2. **Locate the Python script** — `md_to_gdoc.py` is bundled in the same directory as this SKILL.md. Resolve its absolute path from this file's own location (e.g. the directory containing the SKILL.md you are reading — which may be under `~/.claude/skills/` or a plugin cache directory). If for some reason the bundled copy is missing, fall back to a Glob search for `**/md_to_gdoc.py` under `~/.claude/`.
 
 3. **If `--doc-id` is provided, confirm the overwrite with the user before running anything.**
    The script replaces all content of the target Google Doc in place — this is destructive and not reversible. You MUST ask the user to confirm via AskUserQuestion, showing them the doc URL (`https://docs.google.com/document/d/<DOC_ID>/edit`) and the Markdown source path. Do not invoke the script until the user explicitly confirms. If they decline, stop and report that nothing was changed.

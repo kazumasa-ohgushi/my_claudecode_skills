@@ -205,7 +205,10 @@ def _install_dash_list_renderer(md: MarkdownIt) -> None:
         stack = env.get("_list_stack", [])
         if stack and stack[-1] == "ul":
             margin = LIST_INDENT_PER_LEVEL_PT * len(stack)
-            return f'<p style="margin-left:{margin}pt">- '
+            # 3 nbsp + space ≈ 12pt gap: lands the text at ~the wrap indent
+            # (36pt/level). A real tab is unusable — the web UI and PDF
+            # export resolve default tab stops differently.
+            return f'<p style="margin-left:{margin}pt">-&nbsp;&nbsp;&nbsp; '
         return self.renderToken(tokens, idx, options)
 
     def list_item_close(self, tokens, idx, options, env):
@@ -652,12 +655,8 @@ def _table_header_bold_requests(doc: dict) -> list[dict]:
 
 def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
     """Give faux dash-list paragraphs their hanging indent (the HTML
-    importer honors margin-left but drops text-indent), and swap the
-    space after '-' for a tab so the first line's text lands on the
-    36pt-multiple tab stop, flush with the wrapped lines — the same
-    geometry as a real Docs list glyph. (Tabs can't ride through the
-    HTML import; they collapse to a space.) The delete+insert pair is
-    length-neutral, so indices referenced by other requests stay valid."""
+    importer honors margin-left but drops text-indent). Targets paragraphs
+    that start with '-' + nbsp and sit at a list indent level."""
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         para = elem.get("paragraph")
@@ -671,13 +670,12 @@ def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
             (pe["textRun"]["content"] for pe in para.get("elements", [])
              if pe.get("textRun")), "",
         )
-        if not first_run.startswith("- "):
+        if not first_run.startswith(("- ", "-\xa0")):
             continue
-        start = elem["startIndex"]
         out.append({
             "updateParagraphStyle": {
                 "range": {
-                    "startIndex": start,
+                    "startIndex": elem["startIndex"],
                     "endIndex": elem["endIndex"],
                 },
                 "paragraphStyle": {
@@ -690,17 +688,6 @@ def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
                     "spaceBelow": {"magnitude": 0, "unit": "PT"},
                 },
                 "fields": "indentFirstLine,spaceBelow",
-            }
-        })
-        out.append({
-            "deleteContentRange": {
-                "range": {"startIndex": start + 1, "endIndex": start + 2}
-            }
-        })
-        out.append({
-            "insertText": {
-                "location": {"index": start + 1},
-                "text": "\t",
             }
         })
     return out

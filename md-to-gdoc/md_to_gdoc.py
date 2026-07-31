@@ -652,8 +652,12 @@ def _table_header_bold_requests(doc: dict) -> list[dict]:
 
 def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
     """Give faux dash-list paragraphs their hanging indent (the HTML
-    importer honors margin-left but drops text-indent). Targets paragraphs
-    that start with '- ' and sit at a list indent level."""
+    importer honors margin-left but drops text-indent), and swap the
+    space after '-' for a tab so the first line's text lands on the
+    36pt-multiple tab stop, flush with the wrapped lines — the same
+    geometry as a real Docs list glyph. (Tabs can't ride through the
+    HTML import; they collapse to a space.) The delete+insert pair is
+    length-neutral, so indices referenced by other requests stay valid."""
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         para = elem.get("paragraph")
@@ -669,10 +673,11 @@ def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
         )
         if not first_run.startswith("- "):
             continue
+        start = elem["startIndex"]
         out.append({
             "updateParagraphStyle": {
                 "range": {
-                    "startIndex": elem["startIndex"],
+                    "startIndex": start,
                     "endIndex": elem["endIndex"],
                 },
                 "paragraphStyle": {
@@ -685,6 +690,17 @@ def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
                     "spaceBelow": {"magnitude": 0, "unit": "PT"},
                 },
                 "fields": "indentFirstLine,spaceBelow",
+            }
+        })
+        out.append({
+            "deleteContentRange": {
+                "range": {"startIndex": start + 1, "endIndex": start + 2}
+            }
+        })
+        out.append({
+            "insertText": {
+                "location": {"index": start + 1},
+                "text": "\t",
             }
         })
     return out

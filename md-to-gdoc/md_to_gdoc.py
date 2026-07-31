@@ -3,41 +3,25 @@
 md_to_gdoc.py — Convert a Markdown file to a Google Doc.
 
 Pipeline:
-    md → preprocess markdown text
-       + inline local images as base64 data URIs (no separate Drive uploads),
-         physically downscaled to the pageless content width when wider
-    → Drive files.create OR files.update (media mimeType=text/markdown,
-      target mimeType=google-apps.document) — Drive's native markdown
-      importer renders fenced code blocks as REAL Google Docs code blocks
-      (Insert → Building blocks → Code block) with language auto-detection
-      and syntax highlighting
-    → Docs API batchUpdate: spacing/table polish + inline-code and
-      blockquote styling the importer leaves flat
+    md → HTML (markdown-it-py, gfm-like)
+       + math-bracket sentinels around <code>, <pre>, <blockquote>
+       + inline images as base64 data URIs (no separate Drive uploads)
+    → Drive files.create OR files.update (mimeType=google-apps.document)
+    → Docs API batchUpdate: re-apply styling Drive's HTML importer drops,
+      then delete the sentinel chars (reverse-order so deletes don't shift
+      indices of later operations)
 
-Compared to the prior HTML-upload pipeline this:
-    - Produces native Docs code blocks (language chip, copy button,
-      syntax highlighting) instead of hand-styled shaded paragraphs
-    - Removes all sentinel-character machinery (inject/find/style/delete)
-    - Lets Google's own markdown importer handle tables (bold headers),
-      lists, blockquotes, links, strikethrough
-    - Drops the markdown-it-py / linkify-it-py dependencies
-
-Key facts (verified empirically, 2026-07):
-    - The Docs API batchUpdate has NO request type for code blocks; the
-      ONLY programmatic way to create them is Drive markdown import.
-    - In documents.get JSON, a native code block appears as NORMAL_TEXT
-      paragraphs bracketed by U+E907 placeholder characters, with
-      Roboto Mono runs and materialized syntax-highlight colors.
-      The U+E907 markers are part of the widget — never delete them.
-    - The importer ignores PNG DPI metadata and HTML width attributes;
-      display size is always intrinsic pixels at 96 DPI. Wide images are
-      NOT capped, so pixels must be downscaled before upload.
+Compared to the prior batchUpdate-based renderer this:
+    - Removes the need to upload images to Drive as world-readable files
+    - Lets markdown-it-py replace a hand-rolled markdown parser
+    - Cuts ~600 lines of index-tracking DocBuilder code
 
 Usage:
     python3 md_to_gdoc.py <md_file> [--title TITLE] [--doc-id ID] [--folder-id ID]
 
 Requirements:
-    pip install google-auth google-auth-httplib2 google-api-python-client Pillow
+    pip install google-auth google-auth-httplib2 google-api-python-client \
+                Pillow markdown-it-py linkify-it-py
 
 ADC must have Drive + Docs scope:
     gcloud auth application-default login \
@@ -58,34 +42,33 @@ import google.auth
 import google.auth.transport.requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-
-try:
-    import numpy as np
-except ImportError:  # gamma-correct resize degrades to plain LANCZOS
-    np = None
+from markdown_it import MarkdownIt
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-# Placeholder character the Docs API uses for elements it cannot express
-# (here: the code-block widget boundaries produced by the markdown importer).
-CODE_BLOCK_MARKER = "\ue907"
+# Math-bracket sentinels. Drive's HTML importer normalises every PUA codepoint
+# (U+E000-U+F8FF) to U+E907, so PUA can't be used. These math characters
+# survive distinctly. Each is single-codepoint to keep the finder loop simple.
+S_INLINE_CODE_OPEN = "⟦"   # MATHEMATICAL LEFT WHITE SQUARE BRACKET
+S_INLINE_CODE_CLOSE = "⟧"  # MATHEMATICAL RIGHT WHITE SQUARE BRACKET
+S_BLOCKQUOTE_OPEN = "⦃"    # LEFT WHITE CURLY BRACKET
+S_BLOCKQUOTE_CLOSE = "⦄"   # RIGHT WHITE CURLY BRACKET
+S_CODE_BLOCK_OPEN = "⌈"    # LEFT CEILING
+S_CODE_BLOCK_CLOSE = "⌉"   # RIGHT CEILING
 
-# Content width budget (pageless mode).
+# Content width budget (pageless mode). Used for table column sums and the
+# image-width cap.
 MAX_CONTENT_WIDTH_PT = 665
-# The markdown importer places images at intrinsic pixel size / 96 DPI.
-MAX_IMG_WIDTH_PX = int(round(MAX_CONTENT_WIDTH_PT * 96 / 72))  # ≈ 886 px
 
-# Inline-code colors (kept from the prior renderer; the importer itself
-# only switches the font to Roboto Mono).
+# Colors (kept in sync with the prior DocBuilder implementation).
 INLINE_CODE_FG = {"red": 0.780, "green": 0.145, "blue": 0.306}
 INLINE_CODE_BG = {"red": 0.976, "green": 0.949, "blue": 0.957}
+CODE_BLOCK_FG = {"red": 0.133, "green": 0.133, "blue": 0.133}
+CODE_BLOCK_BG = {"red": 0.949, "green": 0.953, "blue": 0.957}
 BQ_BAR = {"red": 0.6, "green": 0.6, "blue": 0.6}
-
-# Paragraph indent (PT) the markdown importer assigns to blockquotes.
-BLOCKQUOTE_INDENT_PT = 30
 
 
 # ---------------------------------------------------------------------------
@@ -106,153 +89,117 @@ def authenticate():
 
 
 # ---------------------------------------------------------------------------
-# Markdown preprocessing
+# Markdown → HTML
 # ---------------------------------------------------------------------------
 
-def _resize_linear_light(im: Image.Image, size: tuple[int, int]) -> Image.Image:
-    """LANCZOS resize in linear-light space. Resizing gamma-encoded sRGB
-    directly overweights dark pixels, so thin dark strokes (chart text,
-    axis lines) come out visibly bolder; converting to linear light first
-    avoids that. Falls back to plain LANCZOS when numpy is unavailable."""
-    if np is None or im.mode not in ("RGB", "RGBA", "L"):
-        return im.resize(size, Image.LANCZOS)
+def md_to_html(md_text: str) -> str:
+    md = MarkdownIt("gfm-like")  # tables, strikethrough, linkify
+    return md.render(md_text)
 
-    arr = np.asarray(im).astype(np.float32) / 255.0
-    if arr.ndim == 2:
-        arr = arr[:, :, None]
-    srgb, alpha = arr[:, :, :3], arr[:, :, 3:]
 
-    lin = np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
-    channels = [
-        np.asarray(Image.fromarray(lin[:, :, c]).resize(size, Image.LANCZOS))
-        for c in range(lin.shape[2])
-    ]
-    if alpha.shape[2]:  # alpha is already linear; resize as-is
-        channels.append(np.asarray(
-            Image.fromarray(alpha[:, :, 0]).resize(size, Image.LANCZOS)
-        ))
-    out = np.stack(channels, axis=-1).clip(0.0, 1.0)
-    out[:, :, :3] = np.where(
-        out[:, :, :3] <= 0.0031308,
-        out[:, :, :3] * 12.92,
-        1.055 * out[:, :, :3] ** (1 / 2.4) - 0.055,
+def inject_sentinels(html: str) -> str:
+    """Wrap target regions with math-bracket sentinels. They become text
+    content that Drive's converter preserves; we locate them in the resulting
+    Doc and use them to identify ranges that need restyling."""
+
+    # 1. Mask out <pre><code>...</code></pre> blocks before touching <code>,
+    #    so we don't accidentally wrap the code-block <code> as inline.
+    masked_pres: list[str] = []
+
+    def mask_pre(m: re.Match) -> str:
+        masked_pres.append(m.group(0))
+        return f"\x00PRE{len(masked_pres) - 1}\x00"
+
+    html = re.sub(r"<pre>.*?</pre>", mask_pre, html, flags=re.DOTALL)
+
+    # 2. inline <code>...</code> — wrap inner text with sentinels.
+    html = re.sub(
+        r"(<code[^>]*>)(.*?)(</code>)",
+        rf"\1{S_INLINE_CODE_OPEN}\2{S_INLINE_CODE_CLOSE}\3",
+        html,
+        flags=re.DOTALL,
     )
-    result = Image.fromarray((out * 255 + 0.5).astype(np.uint8).squeeze())
-    return result.convert(im.mode) if result.mode != im.mode else result
+
+    # 3. <blockquote>...</blockquote> — place sentinels inside the first/last
+    #    <p> so they land in text content (not as orphan text nodes which
+    #    Drive may drop).
+    def wrap_bq(m: re.Match) -> str:
+        inner = m.group(1)
+        inner = re.sub(r"(<p>)", rf"\1{S_BLOCKQUOTE_OPEN}", inner, count=1)
+        idx = inner.rfind("</p>")
+        if idx != -1:
+            inner = inner[:idx] + S_BLOCKQUOTE_CLOSE + inner[idx:]
+        return f"<blockquote>{inner}</blockquote>"
+
+    html = re.sub(r"<blockquote>(.*?)</blockquote>", wrap_bq, html, flags=re.DOTALL)
+
+    # 4. Restore the <pre> blocks with sentinels injected inside.
+    for i, pre in enumerate(masked_pres):
+        pre = re.sub(
+            r"(<pre><code[^>]*>)",
+            rf"\1{S_CODE_BLOCK_OPEN}",
+            pre,
+            count=1,
+        )
+        pre = pre.replace("</code></pre>", f"{S_CODE_BLOCK_CLOSE}</code></pre>", 1)
+        html = html.replace(f"\x00PRE{i}\x00", pre)
+
+    return html
 
 
-def _encode_image(img_path: Path) -> tuple[str, int, int]:
-    """Return (data_uri, width_px, height_px), downscaling to
-    MAX_IMG_WIDTH_PX if wider. The importer has no display-size control,
-    so pixel size IS display size (at 96 DPI)."""
-    mime, _ = mimetypes.guess_type(str(img_path))
-    mime = mime or "image/png"
+def inline_images_as_data_uri(html: str, base_dir: Path) -> str:
+    """Inline local <img src> as base64 data URIs AND cap display width.
+    Drive's HTML import treats <img>'s intrinsic pixel size as the embed size,
+    which overflows the pageless area for wide PNGs. Setting an HTML width
+    attribute (pixels) constrains the imported inline image. PT→PX uses 96
+    DPI: MAX_CONTENT_WIDTH_PT × 96/72 ≈ 887 px."""
 
-    with Image.open(img_path) as im:
-        iw, ih = im.size
-        if iw > MAX_IMG_WIDTH_PX:
-            new_w = MAX_IMG_WIDTH_PX
-            new_h = max(1, int(round(ih * MAX_IMG_WIDTH_PX / iw)))
-            if im.mode not in ("RGB", "RGBA", "L"):
-                im = im.convert("RGBA" if "transparency" in im.info else "RGB")
-            im = _resize_linear_light(im, (new_w, new_h))
-            buf = io.BytesIO()
-            if mime == "image/jpeg":
-                im.convert("RGB").save(buf, format="JPEG", quality=90)
-            else:
-                im.save(buf, format="PNG")
-                mime = "image/png"
-            data = buf.getvalue()
-            iw, ih = new_w, new_h
-        else:
-            data = img_path.read_bytes()
+    max_w_px = int(round(MAX_CONTENT_WIDTH_PT * 96 / 72))
 
-    b64 = base64.b64encode(data).decode("ascii")
-    return f"data:{mime};base64,{b64}", iw, ih
-
-
-# Fenced code blocks per CommonMark, loosened for safety: any indentation
-# (fences inside lists are indented), 3+ fence chars, closing fence of the
-# same char at least as long as the opener. Backticks and tildes are matched
-# separately so a ``` block can't be closed by ~~~.
-_FENCE_RES = [
-    re.compile(
-        r"^[ \t]*(?P<f>" + ch + r"{3,})[^\n]*\n"  # opening fence + info string
-        r"(?:.*\n)*?"                              # body (non-greedy)
-        r"[ \t]*(?P=f)" + ch + r"*[ \t]*$",        # closing fence, >= opener
-        re.MULTILINE,
-    )
-    for ch in ("`", "~")
-]
-
-
-def _mask_code_regions(md_text: str):
-    """Mask fenced code blocks and inline code spans so image rewriting
-    never touches example markdown inside them. Returns (masked, restore)."""
-    stash: list[str] = []
-
-    def mask(m: re.Match) -> str:
-        stash.append(m.group(0))
-        return f"\x00CODE{len(stash) - 1}\x00"
-
-    masked = md_text
-    for fence_re in _FENCE_RES:
-        masked = fence_re.sub(mask, masked)
-    masked = re.sub(r"`[^`\n]+`", mask, masked)
-
-    def restore(text: str) -> str:
-        return re.sub(r"\x00CODE(\d+)\x00",
-                      lambda m: stash[int(m.group(1))], text)
-
-    return masked, restore
-
-
-def inline_local_images(md_text: str, base_dir: Path) -> str:
-    """Replace local image references (md syntax and raw <img> tags) with
-    base64 data URIs, downscaled to the content width."""
-
-    md_text, restore = _mask_code_regions(md_text)
-
-    def is_local(src: str) -> bool:
-        return not src.startswith(("http://", "https://", "data:"))
-
-    def encode_or_none(src: str):
+    def repl(match: re.Match) -> str:
+        full_tag = match.group(0)
+        src = match.group(1)
+        if src.startswith(("http://", "https://", "data:")):
+            return full_tag
         img_path = (base_dir / src).resolve()
         if not img_path.exists():
             print(f"  [WARN] image not found: {img_path}")
-            return None
-        data_uri, w, h = _encode_image(img_path)
-        print(f"  inlined {img_path.name} ({len(data_uri) // 1024} KiB, {w}×{h} px)")
-        return data_uri
+            return full_tag
 
-    def repl_md(m: re.Match) -> str:
-        alt, dest, title = m.group(1), m.group(2), m.group(3) or ""
-        src = dest[1:-1] if dest.startswith("<") else dest  # <...> form
-        if not is_local(src):
-            return m.group(0)
-        data_uri = encode_or_none(src)
-        return m.group(0) if data_uri is None else f"![{alt}]({data_uri}{title})"
+        mime, _ = mimetypes.guess_type(str(img_path))
+        mime = mime or "image/png"
+        b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
+        data_uri = f"data:{mime};base64,{b64}"
 
-    # Destination per CommonMark: either <...> (spaces allowed) or a bare
-    # path with one level of balanced parens, plus an optional "title".
-    md_text = re.sub(
-        r"!\[([^\]]*)\]"
-        r"\(\s*(<[^<>\n]*>|(?:[^()\s]|\([^()\s]*\))+)"
-        r"(\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)",
-        repl_md,
-        md_text,
+        with Image.open(img_path) as im:
+            iw, ih = im.size
+        if iw > max_w_px:
+            new_w = max_w_px
+            new_h = int(round(ih * max_w_px / iw))
+        else:
+            new_w, new_h = iw, ih
+
+        new_tag = full_tag.replace(f'src="{src}"', f'src="{data_uri}"')
+        new_tag = re.sub(r'\s+width="[^"]*"', "", new_tag)
+        new_tag = re.sub(r'\s+height="[^"]*"', "", new_tag)
+        new_tag = new_tag.replace(
+            "<img ", f'<img width="{new_w}" height="{new_h}" ', 1
+        )
+        print(
+            f"  inlined {img_path.name} "
+            f"({len(b64) // 1024} KiB base64, {iw}×{ih} → {new_w}×{new_h} px)"
+        )
+        return new_tag
+
+    return re.sub(r'<img\b[^>]*\bsrc="([^"]+)"[^>]*>', repl, html)
+
+
+def wrap_html(body: str, title: str) -> str:
+    return (
+        "<!DOCTYPE html>\n"
+        f'<html><head><meta charset="utf-8"><title>{title}</title></head>'
+        f"<body>{body}</body></html>"
     )
-
-    def repl_html(m: re.Match) -> str:
-        src = m.group(1)
-        if not is_local(src):
-            return m.group(0)
-        data_uri = encode_or_none(src)
-        return m.group(0) if data_uri is None else m.group(0).replace(src, data_uri)
-
-    md_text = re.sub(r'<img\b[^>]*\bsrc="([^"]+)"[^>]*>', repl_html, md_text)
-
-    return restore(md_text)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +208,7 @@ def inline_local_images(md_text: str, base_dir: Path) -> str:
 
 def get_or_create_doc(
     drive,
-    md_bytes: bytes,
+    html_bytes: bytes,
     title: str,
     doc_id: str | None,
     folder_id: str | None,
@@ -274,8 +221,7 @@ def get_or_create_doc(
             drive.files().update(
                 fileId=doc_id,
                 media_body=MediaIoBaseUpload(
-                    io.BytesIO(md_bytes), mimetype="text/markdown",
-                    resumable=False,
+                    io.BytesIO(html_bytes), mimetype="text/html", resumable=False
                 ),
             ).execute()
             return doc_id, True
@@ -294,7 +240,7 @@ def get_or_create_doc(
         .create(
             body=metadata,
             media_body=MediaIoBaseUpload(
-                io.BytesIO(md_bytes), mimetype="text/markdown", resumable=False
+                io.BytesIO(html_bytes), mimetype="text/html", resumable=False
             ),
             fields="id",
         )
@@ -342,11 +288,13 @@ def _rgb(color: dict) -> dict:
     return {"color": {"rgbColor": color}}
 
 
-def find_code_block_ranges(doc: dict) -> list[tuple[int, int]]:
-    """Locate native code blocks: their content is bracketed by U+E907
-    placeholder characters (the API's stand-in for the widget boundary).
-    Returns [(open_index, close_index), ...] pairing markers in order."""
-    marker_indices: list[int] = []
+def find_sentinel_ranges(
+    doc: dict, open_char: str, close_char: str
+) -> list[tuple[int, int]]:
+    """Walk text runs (including inside tables); return list of
+    (open_index, close_index) pairs."""
+    ranges: list[tuple[int, int]] = []
+    pending_open: list[int | None] = [None]
 
     def visit(content_list: list) -> None:
         for elem in content_list:
@@ -355,49 +303,34 @@ def find_code_block_ranges(doc: dict) -> list[tuple[int, int]]:
                     tr = pe.get("textRun")
                     if not tr:
                         continue
+                    content = tr.get("content", "")
                     base = pe["startIndex"]
-                    for offset, ch in enumerate(tr.get("content", "")):
-                        if ch == CODE_BLOCK_MARKER:
-                            marker_indices.append(base + offset)
+                    for offset, ch in enumerate(content):
+                        if ch == open_char:
+                            pending_open[0] = base + offset
+                        elif ch == close_char and pending_open[0] is not None:
+                            ranges.append((pending_open[0], base + offset))
+                            pending_open[0] = None
             elif "table" in elem:
                 for row in elem["table"].get("tableRows", []):
                     for cell in row.get("tableCells", []):
                         visit(cell.get("content", []))
 
     visit(doc.get("body", {}).get("content", []))
-
-    if len(marker_indices) % 2 != 0:
-        print(
-            f"  [WARN] odd number of code-block markers "
-            f"({len(marker_indices)}); skipping the last one"
-        )
-        marker_indices = marker_indices[:-1]
-    return [
-        (marker_indices[i], marker_indices[i + 1])
-        for i in range(0, len(marker_indices), 2)
-    ]
-
-
-def _in_code_block(start: int, end: int, code_ranges: list[tuple[int, int]]) -> bool:
-    """True if [start, end) overlaps any code block (with 1 char of margin
-    for the shaded frame paragraphs adjacent to the markers)."""
-    return any(start <= ce + 1 and end >= cs - 1 for cs, ce in code_ranges)
+    return ranges
 
 
 # -- Style-only walkers (these do not shift indices) ------------------------
 
-def _paragraph_spacing_requests(doc: dict, code_ranges) -> list[dict]:
-    """The markdown importer leaves NORMAL_TEXT paragraphs with very little
-    spaceBelow. Match the prior renderer's 4pt default. Code-block content
-    is excluded to preserve the native widget's compact line spacing."""
+def _paragraph_spacing_requests(doc: dict) -> list[dict]:
+    """Drive's HTML importer leaves NORMAL_TEXT paragraphs with very little
+    spaceBelow. Match the prior renderer's 4pt default."""
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         para = elem.get("paragraph")
         if not para:
             continue
         if para.get("paragraphStyle", {}).get("namedStyleType") != "NORMAL_TEXT":
-            continue
-        if _in_code_block(elem["startIndex"], elem["endIndex"], code_ranges):
             continue
         out.append({
             "updateParagraphStyle": {
@@ -413,7 +346,8 @@ def _paragraph_spacing_requests(doc: dict, code_ranges) -> list[dict]:
 
 
 def _heading_space_requests(doc: dict) -> list[dict]:
-    """Per-level spaceAbove so sections don't feel cramped."""
+    """Drive's HTML importer gives HEADING_N paragraphs almost no spaceAbove,
+    making sections feel cramped. Set per-level spaceAbove explicitly."""
     above_by_level = {1: 24, 2: 18, 3: 14, 4: 10, 5: 8, 6: 6}
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
@@ -446,7 +380,8 @@ def _heading_space_requests(doc: dict) -> list[dict]:
 
 
 def _table_width_requests(doc: dict) -> list[dict]:
-    """Equal column widths summing to MAX_CONTENT_WIDTH_PT."""
+    """Equal column widths summing to MAX_CONTENT_WIDTH_PT. Drive's default
+    leaves tables narrow with whitespace on the right margin."""
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         table = elem.get("table")
@@ -473,7 +408,7 @@ def _table_width_requests(doc: dict) -> list[dict]:
 
 
 def _table_cell_padding_requests(doc: dict) -> list[dict]:
-    """Bump the importer's tight cell padding to 6/8pt."""
+    """Drive's default cell padding is tight. Bump to 6/8pt across the table."""
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         table = elem.get("table")
@@ -506,101 +441,175 @@ def _table_cell_padding_requests(doc: dict) -> list[dict]:
     return out
 
 
-def _inline_code_requests(doc: dict, code_ranges) -> list[dict]:
-    """The importer renders inline code as bare Roboto Mono. Re-add the
-    fg/bg accent colors. Monospace runs inside native code blocks are the
-    blocks' own content — leave those untouched."""
+def _table_header_bold_requests(doc: dict) -> list[dict]:
+    """Bold every text run in row 0 of each table (markdown convention)."""
     out: list[dict] = []
-
-    def visit(content_list: list) -> None:
-        for elem in content_list:
-            if "paragraph" in elem:
-                for pe in elem["paragraph"].get("elements", []):
+    for elem in doc.get("body", {}).get("content", []):
+        table = elem.get("table")
+        if not table:
+            continue
+        rows = table.get("tableRows", [])
+        if not rows:
+            continue
+        for cell in rows[0].get("tableCells", []):
+            for content_elem in cell.get("content", []):
+                para = content_elem.get("paragraph")
+                if not para:
+                    continue
+                for pe in para.get("elements", []):
                     tr = pe.get("textRun")
                     if not tr:
                         continue
-                    font = (
-                        tr.get("textStyle", {})
-                        .get("weightedFontFamily", {})
-                        .get("fontFamily", "")
-                    )
-                    if "Mono" not in font:
-                        continue
-                    start = pe["startIndex"]
-                    end = start + len(tr.get("content", "").rstrip("\n"))
-                    if end <= start:
-                        continue
-                    if _in_code_block(start, end, code_ranges):
+                    content_len = len(tr.get("content", ""))
+                    if content_len <= 0:
                         continue
                     out.append({
                         "updateTextStyle": {
-                            "range": {"startIndex": start, "endIndex": end},
-                            "textStyle": {
-                                "foregroundColor": _rgb(INLINE_CODE_FG),
-                                "backgroundColor": _rgb(INLINE_CODE_BG),
+                            "range": {
+                                "startIndex": pe["startIndex"],
+                                "endIndex": pe["startIndex"] + content_len,
                             },
-                            "fields": "foregroundColor,backgroundColor",
+                            "textStyle": {"bold": True},
+                            "fields": "bold",
                         }
                     })
-            elif "table" in elem:
-                for row in elem["table"].get("tableRows", []):
-                    for cell in row.get("tableCells", []):
-                        visit(cell.get("content", []))
-
-    visit(doc.get("body", {}).get("content", []))
-    return out
-
-
-def _blockquote_requests(doc: dict, code_ranges) -> list[dict]:
-    """The importer renders blockquotes as plain indented paragraphs
-    (indentStart == indentFirstLine == 30pt, no bullet). Add the left bar."""
-    out: list[dict] = []
-    for elem in doc.get("body", {}).get("content", []):
-        para = elem.get("paragraph")
-        if not para or para.get("bullet"):
-            continue
-        style = para.get("paragraphStyle", {})
-        if style.get("namedStyleType") != "NORMAL_TEXT":
-            continue
-        indent = style.get("indentStart", {}).get("magnitude")
-        first = style.get("indentFirstLine", {}).get("magnitude")
-        if indent != BLOCKQUOTE_INDENT_PT or first != BLOCKQUOTE_INDENT_PT:
-            continue
-        if _in_code_block(elem["startIndex"], elem["endIndex"], code_ranges):
-            continue
-        out.append({
-            "updateParagraphStyle": {
-                "range": {
-                    "startIndex": elem["startIndex"],
-                    "endIndex": elem["endIndex"],
-                },
-                "paragraphStyle": {
-                    "borderLeft": {
-                        "color": _rgb(BQ_BAR),
-                        "width": {"magnitude": 3, "unit": "PT"},
-                        "padding": {"magnitude": 12, "unit": "PT"},
-                        "dashStyle": "SOLID",
-                    },
-                },
-                "fields": "borderLeft",
-            }
-        })
     return out
 
 
 def build_post_process_requests(doc: dict) -> list[dict]:
-    """All requests are style-only (no index shifting), so relative order
-    doesn't matter."""
-    code_ranges = find_code_block_ranges(doc)
-    print(f"      native code blocks detected: {len(code_ranges)}")
+    """Build a single batchUpdate body.
+
+    Order matters because deleteContentRange shifts indices:
+      1. Non-shifting style-only requests (paragraph/heading spacing,
+         table widths/padding, table header bold)
+      2. Sentinel-based requests, processed by start-index DESC so each
+         pair's deletes only shift indices higher than later (lower-index)
+         pairs — which means those later pairs are unaffected.
+    """
 
     requests: list[dict] = []
-    requests.extend(_paragraph_spacing_requests(doc, code_ranges))
+
+    # 0. Document-wide 115% line spacing on body text. The HTML importer
+    #    leaves the NORMAL_TEXT named style at 100, which reads cramped;
+    #    115 matches what Docs' own markdown importer produces.
+    requests.append({
+        "updateNamedStyle": {
+            "namedStyle": {
+                "namedStyleType": "NORMAL_TEXT",
+                "paragraphStyle": {"lineSpacing": 115},
+            },
+            "fields": "namedStyleType,paragraphStyle.lineSpacing",
+        }
+    })
+
+    # 1. Style-only requests first.
+    requests.extend(_paragraph_spacing_requests(doc))
     requests.extend(_heading_space_requests(doc))
     requests.extend(_table_width_requests(doc))
     requests.extend(_table_cell_padding_requests(doc))
-    requests.extend(_inline_code_requests(doc, code_ranges))
-    requests.extend(_blockquote_requests(doc, code_ranges))
+    requests.extend(_table_header_bold_requests(doc))
+
+    # 2. Sentinel-based styling + deletes.
+    inline = [(s, e, "inline_code") for s, e in find_sentinel_ranges(
+        doc, S_INLINE_CODE_OPEN, S_INLINE_CODE_CLOSE
+    )]
+    quotes = [(s, e, "blockquote") for s, e in find_sentinel_ranges(
+        doc, S_BLOCKQUOTE_OPEN, S_BLOCKQUOTE_CLOSE
+    )]
+    blocks = [(s, e, "code_block") for s, e in find_sentinel_ranges(
+        doc, S_CODE_BLOCK_OPEN, S_CODE_BLOCK_CLOSE
+    )]
+
+    print(
+        f"      sentinels: inline_code={len(inline)}, "
+        f"blockquote={len(quotes)}, code_block={len(blocks)}"
+    )
+
+    ops = inline + quotes + blocks
+    ops.sort(key=lambda x: -x[0])  # descending start index
+
+    for start, end, kind in ops:
+        content_start = start + 1
+        content_end = end  # exclusive of close sentinel position
+
+        if kind == "inline_code":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": content_start, "endIndex": content_end},
+                    "textStyle": {
+                        "weightedFontFamily": {"fontFamily": "Roboto Mono"},
+                        "foregroundColor": _rgb(INLINE_CODE_FG),
+                        "backgroundColor": _rgb(INLINE_CODE_BG),
+                    },
+                    "fields": "weightedFontFamily,foregroundColor,backgroundColor",
+                }
+            })
+        elif kind == "blockquote":
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": content_start, "endIndex": content_end},
+                    "paragraphStyle": {
+                        "borderLeft": {
+                            "color": _rgb(BQ_BAR),
+                            "width": {"magnitude": 3, "unit": "PT"},
+                            "padding": {"magnitude": 12, "unit": "PT"},
+                            "dashStyle": "SOLID",
+                        },
+                    },
+                    "fields": "borderLeft",
+                }
+            })
+        elif kind == "code_block":
+            # spaceBelow 0 keeps code lines compact (the 4pt body-paragraph
+            # spacing walker would otherwise stretch the block vertically);
+            # the last line gets its bottom margin back via the follow-up
+            # request on the close-sentinel paragraph.
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": content_start, "endIndex": content_end},
+                    "paragraphStyle": {
+                        "indentStart": {"magnitude": 18, "unit": "PT"},
+                        "indentEnd": {"magnitude": 18, "unit": "PT"},
+                        "shading": {"backgroundColor": _rgb(CODE_BLOCK_BG)},
+                        "spaceBelow": {"magnitude": 0, "unit": "PT"},
+                    },
+                    "fields": "indentStart,indentEnd,shading,spaceBelow",
+                }
+            })
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": end, "endIndex": end + 1},
+                    "paragraphStyle": {
+                        "spaceBelow": {"magnitude": 8, "unit": "PT"},
+                    },
+                    "fields": "spaceBelow",
+                }
+            })
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": content_start, "endIndex": content_end},
+                    "textStyle": {
+                        "weightedFontFamily": {"fontFamily": "Roboto Mono"},
+                        "fontSize": {"magnitude": 9, "unit": "PT"},
+                        "foregroundColor": _rgb(CODE_BLOCK_FG),
+                    },
+                    "fields": "weightedFontFamily,fontSize,foregroundColor",
+                }
+            })
+
+        # Delete close (higher index) first, then open. Both are at indices
+        # >= start; later (lower-start) ops are unaffected.
+        requests.append({
+            "deleteContentRange": {
+                "range": {"startIndex": end, "endIndex": end + 1}
+            }
+        })
+        requests.append({
+            "deleteContentRange": {
+                "range": {"startIndex": start, "endIndex": start + 1}
+            }
+        })
+
     return requests
 
 
@@ -608,7 +617,7 @@ def post_process(docs, doc_id: str) -> None:
     doc = docs.documents().get(documentId=doc_id).execute()
     requests = build_post_process_requests(doc)
     if not requests:
-        print("      nothing to post-process")
+        print("      no sentinels found; nothing to post-process")
         return
     print(f"      sending {len(requests)} batchUpdate requests")
     docs.documents().batchUpdate(
@@ -633,17 +642,23 @@ def convert(
     print(f"[1/5] Reading {md_path}")
     md_text = md_path.read_text(encoding="utf-8")
 
-    print("[2/5] Inlining images as data URIs")
-    md_text = inline_local_images(md_text, md_path.parent)
-    md_bytes = md_text.encode("utf-8")
-    print(f"      markdown size: {len(md_bytes) // 1024} KiB")
+    print("[2/5] Markdown → HTML + sentinel injection")
+    html_body = md_to_html(md_text)
+    html_body = inject_sentinels(html_body)
+
+    print("[3/5] Inlining images as data URIs")
+    html_body = inline_images_as_data_uri(html_body, md_path.parent)
 
     effective_title = title or md_path.stem
+    full_html = wrap_html(html_body, effective_title)
+    html_bytes = full_html.encode("utf-8")
+    print(f"      HTML size: {len(html_bytes) // 1024} KiB")
+
     drive, docs = authenticate()
 
-    print("[3/5] Uploading to Drive (native markdown import)")
+    print("[4/5] Uploading to Drive")
     final_doc_id, used_existing = get_or_create_doc(
-        drive, md_bytes, effective_title, doc_id, folder_id
+        drive, html_bytes, effective_title, doc_id, folder_id
     )
     doc_url = f"https://docs.google.com/document/d/{final_doc_id}/edit"
     if used_existing:
@@ -651,7 +666,6 @@ def convert(
     else:
         print(f"      Created new doc: {doc_url}")
 
-    print("[4/5] Setting pageless mode")
     set_pageless(docs, final_doc_id)
 
     print("[5/5] Post-processing styles via Docs API")

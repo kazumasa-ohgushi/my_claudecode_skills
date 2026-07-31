@@ -195,11 +195,11 @@ def _install_dash_list_renderer(md: MarkdownIt) -> None:
 
     def ordered_list_open(self, tokens, idx, options, env):
         env.setdefault("_list_stack", []).append("ol")
-        return self.renderToken(tokens, idx, options)
+        return self.renderToken(tokens, idx, options, env)
 
     def ordered_list_close(self, tokens, idx, options, env):
         env["_list_stack"].pop()
-        return self.renderToken(tokens, idx, options)
+        return self.renderToken(tokens, idx, options, env)
 
     def list_item_open(self, tokens, idx, options, env):
         stack = env.get("_list_stack", [])
@@ -209,13 +209,13 @@ def _install_dash_list_renderer(md: MarkdownIt) -> None:
             # (36pt/level). A real tab is unusable — the web UI and PDF
             # export resolve default tab stops differently.
             return f'<p style="margin-left:{margin}pt">-&nbsp;&nbsp;&nbsp; '
-        return self.renderToken(tokens, idx, options)
+        return self.renderToken(tokens, idx, options, env)
 
     def list_item_close(self, tokens, idx, options, env):
         stack = env.get("_list_stack", [])
         if stack and stack[-1] == "ul":
             return "</p>\n"
-        return self.renderToken(tokens, idx, options)
+        return self.renderToken(tokens, idx, options, env)
 
     md.add_render_rule("bullet_list_open", bullet_list_open)
     md.add_render_rule("bullet_list_close", bullet_list_close)

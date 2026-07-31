@@ -68,6 +68,8 @@ In a Claude Code session:
 ## Notes
 
 - The document is created in pageless format automatically.
-- Wide images are capped at the pageless content width (~665pt); height scales proportionally.
+- Typography mirrors Google's own markdown importer: its named-style set (Arial 11 body at 115% line spacing, 20/16/14pt regular-weight headings), blank lines preserved as empty paragraphs, and Roboto Mono code.
+- Unordered lists render as "-" dash items with hanging indent (visually matching the markdown importer). They are plain paragraphs, not real Docs lists; ordered lists remain real numbered lists.
+- Wide images are capped at the pageless content width (~665pt) display-wise; full pixel resolution is preserved.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.
 - To update the skill, re-run the `curl` commands in step 1.

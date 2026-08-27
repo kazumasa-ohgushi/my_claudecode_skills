@@ -211,16 +211,26 @@ def md_to_html(md_text: str) -> str:
     return "".join(parts)
 
 
+# Table markup tags, as opposed to the inline tags that may appear inside a
+# cell (<strong>, <em>, <a>, <code>, ...).
+_TABLE_STRUCT_TAG = r"</?(?:table|thead|tbody|tfoot|tr|th|td)\b[^>]*>"
+
+
 def compact_table_markup(html: str) -> str:
-    """Strip the whitespace between table tags. Drive's HTML importer turns
-    the newline after the last <th> of a header row into a stray ' '
-    paragraph in that cell, which inflates the whole header row's height."""
-    return re.sub(
-        r"<table>.*?</table>",
-        lambda m: re.sub(r">\s+<", "><", m.group(0)),
-        html,
-        flags=re.DOTALL,
-    )
+    """Strip the whitespace between table structure tags. Drive's HTML
+    importer turns the newline after the last <th> of a header row into a
+    stray ' ' paragraph in that cell, which inflates the whole header row's
+    height. Only whitespace with a structure tag on *both* sides is removed
+    — the space in `<strong>Revenue</strong> <em>(USD)</em>` is cell text
+    and must survive."""
+    def compact(match: re.Match) -> str:
+        return re.sub(
+            rf"({_TABLE_STRUCT_TAG})\s+(?={_TABLE_STRUCT_TAG})",
+            r"\1",
+            match.group(0),
+        )
+
+    return re.sub(r"<table>.*?</table>", compact, html, flags=re.DOTALL)
 
 
 def inject_sentinels(html: str) -> str:
@@ -251,13 +261,20 @@ def inject_sentinels(html: str) -> str:
     #    Drive may drop).
     def wrap_bq(m: re.Match) -> str:
         inner = m.group(1)
-        # match styled paragraphs too, or the sentinel pair ends up
-        # unbalanced
-        inner = re.sub(r"(<p\b[^>]*>)", rf"\1{S_BLOCKQUOTE_OPEN}", inner, count=1)
-        idx = inner.rfind("</p>")
-        if idx != -1:
-            inner = inner[:idx] + S_BLOCKQUOTE_CLOSE + inner[idx:]
-        return f"<blockquote>{inner}</blockquote>"
+        # Anchor on <p> or <li>: a blockquote holding only a bullet list has
+        # no paragraph at all, and one that ends in a list would otherwise
+        # close the range at the introductory paragraph, leaving the list
+        # outside the quote border.
+        opened = re.subn(
+            r"(<(?:p|li)\b[^>]*>)", rf"\1{S_BLOCKQUOTE_OPEN}", inner, count=1
+        )
+        if not opened[1]:
+            return f"<blockquote>{inner}</blockquote>"
+        inner = opened[0]
+        idx = max(inner.rfind("</p>"), inner.rfind("</li>"))
+        if idx == -1:
+            return f"<blockquote>{inner}</blockquote>"
+        return f"<blockquote>{inner[:idx]}{S_BLOCKQUOTE_CLOSE}{inner[idx:]}</blockquote>"
 
     html = re.sub(r"<blockquote>(.*?)</blockquote>", wrap_bq, html, flags=re.DOTALL)
 

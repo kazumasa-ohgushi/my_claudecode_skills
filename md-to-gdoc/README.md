@@ -57,7 +57,7 @@ In a Claude Code session:
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
 | Images | `![alt](relative/path/to/image.png)` |
-| Tables | GFM pipe tables (header row rendered bold) |
+| Tables | GFM pipe tables (navy header band, alternating row fill) |
 | Blockquotes | `> text` |
 | Bullet lists | `- item` |
 | Ordered lists | `1. item` |
@@ -68,8 +68,9 @@ In a Claude Code session:
 ## Notes
 
 - The document is created in pageless format automatically.
-- Typography mirrors Google's own markdown importer: its named-style set (Arial 11 body at 115% line spacing, 20/16/14pt regular-weight headings), blank lines preserved as empty paragraphs, and Roboto Mono code.
-- Unordered lists render as "-" dash items with hanging indent (visually matching the markdown importer). They are plain paragraphs, not real Docs lists; ordered lists remain real numbered lists.
+- Typography mirrors Google's own markdown importer: its named-style set (Arial 11 body at 115% line spacing, 26/20/16/14pt title and headings, gray H3-H6), with the Title and H1-H3 bolded, blank lines preserved as empty paragraphs, and Roboto Mono code.
+- Tables get a navy header band with white text, body rows alternating white / #F6F8F9, and hairline navy borders on every cell.
+- Bullet and ordered lists are real Docs lists (●/○/■ and 1./a./i.), so Docs auto-continues them when the doc is edited.
 - Wide images are capped at the pageless content width (~665pt) display-wise; full pixel resolution is preserved.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.
 - To update the skill, re-run the `curl` commands in step 1.

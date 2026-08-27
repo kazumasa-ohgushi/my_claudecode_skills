@@ -2,7 +2,7 @@
 name: md-to-gdoc
 description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Supports headings, tables, code blocks, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are inlined as base64 data URIs (no separate Drive uploads). Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
 argument-hint: "<path/to/file.md> [--title TITLE] [--doc-id DOC_ID] [--folder-id FOLDER_ID]"
-last_verified: 2026-07-31
+last_verified: 2026-08-27
 owner: Kazumasa Ohgushi
 ---
 # md-to-gdoc: Convert Markdown to Google Doc
@@ -62,7 +62,7 @@ When this skill is invoked:
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
 | Images | `![alt](relative/path/to/image.png)` |
-| Tables | GFM pipe tables (header row rendered bold) |
+| Tables | GFM pipe tables (navy header band, alternating row fill) |
 | Blockquotes | `> text` |
 | Bullet lists | `- item` |
 | Ordered lists | `1. item` |
@@ -76,13 +76,15 @@ When this skill is invoked:
 
 - The document is created in pageless format automatically.
 - Typography mirrors Google's own markdown importer: its full named-style
-  set (Arial 11 body at 115% line spacing, 20/16/14pt regular-weight
-  headings) is applied document-wide, blank lines in the source survive as
-  empty paragraphs, and code renders in Roboto Mono.
-- Unordered lists render as "-" dash items with hanging indent (matching
-  the markdown importer's look). They are visually identical to real lists
-  but are plain paragraphs — Docs won't auto-continue bullets when editing
-  them. Ordered lists remain real numbered lists.
+  set (Arial 11 body at 115% line spacing, 26/20/16/14pt title and
+  headings, gray H3-H6) is applied document-wide, with the Title and H1-H3
+  bolded. Blank lines in the source survive as empty paragraphs, and code
+  renders in Roboto Mono.
+- Tables get a navy header band with white text, body rows alternating
+  white / #F6F8F9, and hairline navy borders on every cell. Cell content is
+  vertically centered.
+- Bullet and ordered lists are real Docs lists (●/○/■ and 1./a./i.), so
+  Docs auto-continues them when the doc is edited.
 - Images are embedded as base64 data URIs inside the HTML upload — no temporary Drive files, no public-link window. Full resolution is preserved (display width is capped, pixels are not).
 - Wide images are capped at the pageless content width (~665pt); height scales proportionally.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.

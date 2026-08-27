@@ -4,6 +4,7 @@ md_to_gdoc.py — Convert a Markdown file to a Google Doc.
 
 Pipeline:
     md → HTML (markdown-it-py, gfm-like)
+       + whitespace between table tags stripped
        + math-bracket sentinels around <code>, <pre>, <blockquote>
        + inline images as base64 data URIs (no separate Drive uploads)
     → Drive files.create OR files.update (mimeType=google-apps.document)
@@ -70,83 +71,73 @@ CODE_BLOCK_FG = {"red": 0.133, "green": 0.133, "blue": 0.133}
 CODE_BLOCK_BG = {"red": 0.949, "green": 0.953, "blue": 0.957}
 BQ_BAR = {"red": 0.6, "green": 0.6, "blue": 0.6}
 
-# Named-style preset captured from a Google-native markdown import
-# (documents.get -> namedStyles of a Doc created via Drive text/markdown
-# conversion). Applying it document-wide reproduces the official importer's
-# typography: Arial 11 / 115% line spacing body, 20/16/14pt regular-weight
-# headings with gray H3-H6, etc. Fields absent from an entry are listed in
-# the field mask anyway, resetting them to the Docs default (e.g. heading
-# bold=True from the HTML importer is cleared).
-NAMED_STYLE_PRESET: dict[str, dict] = {'NORMAL_TEXT': {'textStyle': {'weightedFontFamily': {'fontFamily': 'Arial',
-                                                      'weight': 400},
-                               'fontSize': {'magnitude': 11, 'unit': 'PT'},
-                               'bold': False,
-                               'foregroundColor': {'color': {'rgbColor': {}}}},
-                 'paragraphStyle': {'lineSpacing': 115,
-                                    'spaceAbove': {'unit': 'PT'},
-                                    'spaceBelow': {'unit': 'PT'}}},
- 'HEADING_1': {'textStyle': {'fontSize': {'magnitude': 20, 'unit': 'PT'}},
-               'paragraphStyle': {'spaceAbove': {'magnitude': 20,
-                                                 'unit': 'PT'},
-                                  'spaceBelow': {'magnitude': 6,
-                                                 'unit': 'PT'}}},
- 'HEADING_2': {'textStyle': {'fontSize': {'magnitude': 16, 'unit': 'PT'},
-                             'bold': False},
-               'paragraphStyle': {'spaceAbove': {'magnitude': 18,
-                                                 'unit': 'PT'},
-                                  'spaceBelow': {'magnitude': 6,
-                                                 'unit': 'PT'}}},
- 'HEADING_3': {'textStyle': {'fontSize': {'magnitude': 14, 'unit': 'PT'},
-                             'bold': False,
-                             'foregroundColor': {'color': {'rgbColor': {'red': 0.2627451,
-                                                                        'green': 0.2627451,
-                                                                        'blue': 0.2627451}}}},
-               'paragraphStyle': {'spaceAbove': {'magnitude': 16,
-                                                 'unit': 'PT'},
-                                  'spaceBelow': {'magnitude': 4,
-                                                 'unit': 'PT'}}},
- 'HEADING_4': {'textStyle': {'fontSize': {'magnitude': 12, 'unit': 'PT'},
-                             'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
-                                                                        'green': 0.4,
-                                                                        'blue': 0.4}}}},
-               'paragraphStyle': {'spaceAbove': {'magnitude': 14,
-                                                 'unit': 'PT'},
-                                  'spaceBelow': {'magnitude': 4,
-                                                 'unit': 'PT'}}},
- 'HEADING_5': {'textStyle': {'fontSize': {'magnitude': 11, 'unit': 'PT'},
-                             'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
-                                                                        'green': 0.4,
-                                                                        'blue': 0.4}}}},
-               'paragraphStyle': {'spaceAbove': {'magnitude': 12,
-                                                 'unit': 'PT'},
-                                  'spaceBelow': {'magnitude': 4,
-                                                 'unit': 'PT'}}},
- 'HEADING_6': {'textStyle': {'fontSize': {'magnitude': 11, 'unit': 'PT'},
-                             'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
-                                                                        'green': 0.4,
-                                                                        'blue': 0.4}}}},
-               'paragraphStyle': {'spaceAbove': {'magnitude': 12,
-                                                 'unit': 'PT'},
-                                  'spaceBelow': {'magnitude': 4,
-                                                 'unit': 'PT'}}},
- 'TITLE': {'textStyle': {'fontSize': {'magnitude': 26, 'unit': 'PT'}},
-           'paragraphStyle': {'spaceAbove': {'unit': 'PT'},
-                              'spaceBelow': {'magnitude': 3,
-                                             'unit': 'PT'}}},
- 'SUBTITLE': {'textStyle': {'weightedFontFamily': {'fontFamily': 'Arial',
-                                                   'weight': 400},
-                            'fontSize': {'magnitude': 15, 'unit': 'PT'},
-                            'foregroundColor': {'color': {'rgbColor': {'red': 0.4,
-                                                                       'green': 0.4,
-                                                                       'blue': 0.4}}}},
-              'paragraphStyle': {'spaceAbove': {'unit': 'PT'},
-                                 'spaceBelow': {'magnitude': 16,
-                                                'unit': 'PT'}}}}
+# Text colors, matching the markdown importer: black body, gray H3-H6.
+BODY_FG: dict = {}  # empty rgbColor == the Docs default, black
+MUTED_FG = {"red": 0.2627451, "green": 0.2627451, "blue": 0.2627451}  # #434343
+SUBTLE_FG = {"red": 0.4, "green": 0.4, "blue": 0.4}                   # #666666
+WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
+
+# Table decoration: navy header band, alternating body rows, hairline navy
+# borders on every cell.
+ACCENT = {"red": 0.015686275, "green": 0.0, "blue": 0.47058824}            # #040078
+TABLE_HEADER_BG = ACCENT
+TABLE_HEADER_FG = WHITE
+TABLE_STRIPE_BG = {"red": 0.9647059, "green": 0.972549, "blue": 0.9764706}  # #F6F8F9
+TABLE_BORDER_FG = ACCENT
+TABLE_BORDER_WIDTH_PT = 0.416667
+
+BODY_FONT = "Arial"
+
+
+def _named_style(
+    size: float,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+    fg: dict = BODY_FG,
+    above: float = 0,
+    below: float = 0,
+) -> dict:
+    """One NAMED_STYLE_PRESET entry. Every field in NAMED_STYLE_FIELDS is
+    emitted explicitly: a field named in the mask but missing from the
+    payload is reset to the Docs default, so every heading names the body
+    font rather than leaving it to inheritance."""
+    return {
+        "textStyle": {
+            "weightedFontFamily": {"fontFamily": BODY_FONT, "weight": 400},
+            "fontSize": {"magnitude": size, "unit": "PT"},
+            "bold": bold,
+            "italic": italic,
+            "foregroundColor": {"color": {"rgbColor": fg}},
+        },
+        "paragraphStyle": {
+            "lineSpacing": 115,
+            "spaceAbove": {"magnitude": above, "unit": "PT"},
+            "spaceBelow": {"magnitude": below, "unit": "PT"},
+        },
+    }
+
+
+# Named-style preset captured from a Google-native markdown import: Arial 11
+# / 115% line spacing body, 26/20/16/14pt title and headings, gray H3-H6.
+# The Title and H1-H3 are bolded on top of it. Applied document-wide after
+# import, replacing whatever the HTML importer inferred.
+NAMED_STYLE_PRESET: dict[str, dict] = {
+    "NORMAL_TEXT": _named_style(11),
+    "HEADING_1": _named_style(20, bold=True, above=20, below=6),
+    "HEADING_2": _named_style(16, bold=True, above=18, below=6),
+    "HEADING_3": _named_style(14, bold=True, fg=MUTED_FG, above=16, below=4),
+    "HEADING_4": _named_style(12, fg=SUBTLE_FG, above=14, below=4),
+    "HEADING_5": _named_style(11, fg=SUBTLE_FG, above=12, below=4),
+    "HEADING_6": _named_style(11, italic=True, fg=SUBTLE_FG, above=12, below=4),
+    "TITLE": _named_style(26, bold=True, below=3),
+    "SUBTITLE": _named_style(15, fg=SUBTLE_FG, below=16),
+}
 
 NAMED_STYLE_FIELDS = (
     "namedStyleType,"
     "textStyle.weightedFontFamily,textStyle.fontSize,textStyle.bold,"
-    "textStyle.foregroundColor,"
+    "textStyle.italic,textStyle.foregroundColor,"
     "paragraphStyle.lineSpacing,paragraphStyle.spaceAbove,paragraphStyle.spaceBelow"
 )
 
@@ -172,102 +163,6 @@ def authenticate():
 # Markdown → HTML
 # ---------------------------------------------------------------------------
 
-# Indent geometry for dash lists (matches the markdown importer's lists:
-# text at 36pt per level, glyph hanging 18pt to the left).
-LIST_INDENT_PER_LEVEL_PT = 36
-LIST_HANGING_PT = 18
-
-
-def _install_dash_list_renderer(md: MarkdownIt) -> None:
-    """Render unordered lists as '- ' paragraphs with per-level margins,
-    mimicking the markdown importer's dash bullets (its glyphSymbol '-'
-    cannot be created via the API, and the HTML importer ignores CSS
-    list-style-type). Hanging indent is added post-import (the importer
-    honors margin-left but drops text-indent). Ordered lists stay real."""
-
-    # env bookkeeping:
-    #   _list_stack — 'ul'/'ol' nesting, drives the indent level
-    #   _item_stack — one entry per open faux (ul) item: whether its
-    #                 faux <p> is currently open. Loose items and nested
-    #                 block content must close it first, otherwise the
-    #                 nested <p>/<ol> auto-closes the faux paragraph and
-    #                 strands the dash on its own line.
-
-    def _margin(env) -> int:
-        return LIST_INDENT_PER_LEVEL_PT * len(env.get("_list_stack", []))
-
-    def _close_open_faux_p(env) -> str:
-        items = env.get("_item_stack", [])
-        if items and items[-1]["p_open"]:
-            items[-1]["p_open"] = False
-            return "</p>\n"
-        return ""
-
-    def bullet_list_open(self, tokens, idx, options, env):
-        closer = _close_open_faux_p(env)
-        env.setdefault("_list_stack", []).append("ul")
-        return closer
-
-    def bullet_list_close(self, tokens, idx, options, env):
-        env["_list_stack"].pop()
-        return ""
-
-    def ordered_list_open(self, tokens, idx, options, env):
-        closer = _close_open_faux_p(env)
-        env.setdefault("_list_stack", []).append("ol")
-        return closer + self.renderToken(tokens, idx, options, env)
-
-    def ordered_list_close(self, tokens, idx, options, env):
-        env["_list_stack"].pop()
-        return self.renderToken(tokens, idx, options, env)
-
-    def list_item_open(self, tokens, idx, options, env):
-        stack = env.get("_list_stack", [])
-        if stack and stack[-1] == "ul":
-            env.setdefault("_item_stack", []).append({"p_open": True})
-            # 3 nbsp + space ≈ 12pt gap: lands the text at ~the wrap indent
-            # (36pt/level). A real tab is unusable — the web UI and PDF
-            # export resolve default tab stops differently.
-            return (f'<p style="margin-left:{_margin(env)}pt">'
-                    "-&nbsp;&nbsp;&nbsp; ")
-        return self.renderToken(tokens, idx, options, env)
-
-    def list_item_close(self, tokens, idx, options, env):
-        stack = env.get("_list_stack", [])
-        if stack and stack[-1] == "ul":
-            item = env["_item_stack"].pop()
-            return "</p>\n" if item["p_open"] else ""
-        return self.renderToken(tokens, idx, options, env)
-
-    def paragraph_open(self, tokens, idx, options, env):
-        # Visible paragraphs only occur inside loose items (tight-item
-        # paragraphs are hidden and never reach render rules).
-        stack = env.get("_list_stack", [])
-        if stack and stack[-1] == "ul" and env.get("_item_stack"):
-            item = env["_item_stack"][-1]
-            if item["p_open"]:  # first paragraph: flow into the dash <p>
-                return ""
-            item["p_open"] = True  # continuation paragraph: indented, no dash
-            return f'<p style="margin-left:{_margin(env)}pt">'
-        return self.renderToken(tokens, idx, options, env)
-
-    def paragraph_close(self, tokens, idx, options, env):
-        stack = env.get("_list_stack", [])
-        if stack and stack[-1] == "ul" and env.get("_item_stack"):
-            env["_item_stack"][-1]["p_open"] = False
-            return "</p>\n"
-        return self.renderToken(tokens, idx, options, env)
-
-    md.add_render_rule("bullet_list_open", bullet_list_open)
-    md.add_render_rule("bullet_list_close", bullet_list_close)
-    md.add_render_rule("ordered_list_open", ordered_list_open)
-    md.add_render_rule("ordered_list_close", ordered_list_close)
-    md.add_render_rule("list_item_open", list_item_open)
-    md.add_render_rule("list_item_close", list_item_close)
-    md.add_render_rule("paragraph_open", paragraph_open)
-    md.add_render_rule("paragraph_close", paragraph_close)
-
-
 def md_to_html(md_text: str) -> str:
     """Render markdown to HTML, preserving source blank lines as empty
     <p></p> paragraphs (Drive's HTML importer keeps them as empty
@@ -276,7 +171,6 @@ def md_to_html(md_text: str) -> str:
     swallowed, matching the markdown importer. Blank lines before a block
     also keep <hr> from merging into a following heading on import."""
     md = MarkdownIt("gfm-like")  # tables, strikethrough, linkify
-    _install_dash_list_renderer(md)
     env: dict = {}
     tokens = md.parse(md_text, env)
 
@@ -317,6 +211,18 @@ def md_to_html(md_text: str) -> str:
     return "".join(parts)
 
 
+def compact_table_markup(html: str) -> str:
+    """Strip the whitespace between table tags. Drive's HTML importer turns
+    the newline after the last <th> of a header row into a stray ' '
+    paragraph in that cell, which inflates the whole header row's height."""
+    return re.sub(
+        r"<table>.*?</table>",
+        lambda m: re.sub(r">\s+<", "><", m.group(0)),
+        html,
+        flags=re.DOTALL,
+    )
+
+
 def inject_sentinels(html: str) -> str:
     """Wrap target regions with math-bracket sentinels. They become text
     content that Drive's converter preserves; we locate them in the resulting
@@ -345,8 +251,8 @@ def inject_sentinels(html: str) -> str:
     #    Drive may drop).
     def wrap_bq(m: re.Match) -> str:
         inner = m.group(1)
-        # match styled paragraphs too (faux dash-list items carry a
-        # style attribute), or the sentinel pair ends up unbalanced
+        # match styled paragraphs too, or the sentinel pair ends up
+        # unbalanced
         inner = re.sub(r"(<p\b[^>]*>)", rf"\1{S_BLOCKQUOTE_OPEN}", inner, count=1)
         idx = inner.rfind("</p>")
         if idx != -1:
@@ -546,13 +452,16 @@ def find_sentinel_ranges(
 
 def _paragraph_spacing_requests(doc: dict) -> list[dict]:
     """Drive's HTML importer leaves NORMAL_TEXT paragraphs with very little
-    spaceBelow. Match the prior renderer's 4pt default."""
+    spaceBelow. Match the prior renderer's 4pt default. List items are left
+    alone — Docs collapses spacing between them and the gap looks wrong."""
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         para = elem.get("paragraph")
         if not para:
             continue
         if para.get("paragraphStyle", {}).get("namedStyleType") != "NORMAL_TEXT":
+            continue
+        if para.get("bullet"):
             continue
         out.append({
             "updateParagraphStyle": {
@@ -663,17 +572,76 @@ def _table_cell_padding_requests(doc: dict) -> list[dict]:
     return out
 
 
-def _table_header_bold_requests(doc: dict) -> list[dict]:
-    """Bold every text run in row 0 of each table (markdown convention)."""
+def _table_decoration_requests(doc: dict) -> list[dict]:
+    """Decorate each table like the reference Doc: hairline accent borders
+    on every cell, an accent-filled header row with white text, and body
+    rows alternating between white and a light tint. Cell content is
+    centered vertically — the HTML importer gives the header row an extra
+    line of height, which top-aligned text makes look lopsided."""
+
+    def _border() -> dict:
+        return {
+            "color": _rgb(TABLE_BORDER_FG),
+            "width": {"magnitude": TABLE_BORDER_WIDTH_PT, "unit": "PT"},
+            "dashStyle": "SOLID",
+        }
+
     out: list[dict] = []
     for elem in doc.get("body", {}).get("content", []):
         table = elem.get("table")
         if not table:
             continue
-        rows = table.get("tableRows", [])
-        if not rows:
+        n_rows = table.get("rows", 0)
+        n_cols = table.get("columns", 0)
+        if n_rows <= 0 or n_cols <= 0:
             continue
-        for cell in rows[0].get("tableCells", []):
+
+        def row_range(row_index: int, row_span: int = 1) -> dict:
+            return {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": elem["startIndex"]},
+                    "rowIndex": row_index,
+                    "columnIndex": 0,
+                },
+                "rowSpan": row_span,
+                "columnSpan": n_cols,
+            }
+
+        out.append({
+            "updateTableCellStyle": {
+                "tableRange": row_range(0, n_rows),
+                "tableCellStyle": {
+                    "borderTop": _border(),
+                    "borderBottom": _border(),
+                    "borderLeft": _border(),
+                    "borderRight": _border(),
+                    "contentAlignment": "MIDDLE",
+                },
+                "fields": (
+                    "borderTop,borderBottom,borderLeft,borderRight,"
+                    "contentAlignment"
+                ),
+            }
+        })
+
+        # Row 0 is the header band; body rows alternate from white.
+        for row_index in range(n_rows):
+            if row_index == 0:
+                fill = TABLE_HEADER_BG
+            else:
+                fill = WHITE if row_index % 2 == 1 else TABLE_STRIPE_BG
+            out.append({
+                "updateTableCellStyle": {
+                    "tableRange": row_range(row_index),
+                    "tableCellStyle": {"backgroundColor": _rgb(fill)},
+                    "fields": "backgroundColor",
+                }
+            })
+
+        # Header text: white, and un-bold whatever the <th> import applied
+        # (the accent band already carries the emphasis).
+        header_row = (table.get("tableRows") or [{}])[0]
+        for cell in header_row.get("tableCells", []):
             for content_elem in cell.get("content", []):
                 para = content_elem.get("paragraph")
                 if not para:
@@ -691,50 +659,13 @@ def _table_header_bold_requests(doc: dict) -> list[dict]:
                                 "startIndex": pe["startIndex"],
                                 "endIndex": pe["startIndex"] + content_len,
                             },
-                            "textStyle": {"bold": True},
-                            "fields": "bold",
+                            "textStyle": {
+                                "bold": False,
+                                "foregroundColor": _rgb(TABLE_HEADER_FG),
+                            },
+                            "fields": "bold,foregroundColor",
                         }
                     })
-    return out
-
-
-def _dash_list_hanging_indent_requests(doc: dict) -> list[dict]:
-    """Give faux dash-list paragraphs their hanging indent (the HTML
-    importer honors margin-left but drops text-indent). Targets paragraphs
-    that start with '-' + nbsp and sit at a list indent level."""
-    out: list[dict] = []
-    for elem in doc.get("body", {}).get("content", []):
-        para = elem.get("paragraph")
-        if not para:
-            continue
-        style = para.get("paragraphStyle", {})
-        indent = style.get("indentStart", {}).get("magnitude")
-        if not indent or indent % LIST_INDENT_PER_LEVEL_PT != 0:
-            continue
-        first_run = next(
-            (pe["textRun"]["content"] for pe in para.get("elements", [])
-             if pe.get("textRun")), "",
-        )
-        if not first_run.startswith(("- ", "-\xa0")):
-            continue
-        out.append({
-            "updateParagraphStyle": {
-                "range": {
-                    "startIndex": elem["startIndex"],
-                    "endIndex": elem["endIndex"],
-                },
-                "paragraphStyle": {
-                    "indentFirstLine": {
-                        "magnitude": indent - LIST_HANGING_PT,
-                        "unit": "PT",
-                    },
-                    # real Docs lists collapse inter-item spacing
-                    # (COLLAPSE_LISTS); match that for the faux items
-                    "spaceBelow": {"magnitude": 0, "unit": "PT"},
-                },
-                "fields": "indentFirstLine,spaceBelow",
-            }
-        })
     return out
 
 
@@ -743,7 +674,7 @@ def build_post_process_requests(doc: dict) -> list[dict]:
 
     Order matters because deleteContentRange shifts indices:
       1. Non-shifting style-only requests (paragraph/heading spacing,
-         table widths/padding, table header bold)
+         table widths/padding, table decoration)
       2. Sentinel-based requests, processed by start-index DESC so each
          pair's deletes only shift indices higher than later (lower-index)
          pairs — which means those later pairs are unaffected.
@@ -751,8 +682,8 @@ def build_post_process_requests(doc: dict) -> list[dict]:
 
     requests: list[dict] = []
 
-    # 0. Port the official markdown importer's named styles document-wide
-    #    (fonts, sizes, weights, colors, line spacing, heading margins).
+    # 0. Apply the house named styles document-wide (fonts, sizes,
+    #    weights, colors, line spacing, heading margins).
     for style_type, style in NAMED_STYLE_PRESET.items():
         named_style = {"namedStyleType": style_type, **style}
         requests.append({
@@ -767,8 +698,7 @@ def build_post_process_requests(doc: dict) -> list[dict]:
     requests.extend(_heading_space_requests(doc))
     requests.extend(_table_width_requests(doc))
     requests.extend(_table_cell_padding_requests(doc))
-    requests.extend(_table_header_bold_requests(doc))
-    requests.extend(_dash_list_hanging_indent_requests(doc))
+    requests.extend(_table_decoration_requests(doc))
 
     # 2. Sentinel-based styling + deletes.
     inline = [(s, e, "inline_code") for s, e in find_sentinel_ranges(
@@ -905,6 +835,7 @@ def convert(
 
     print("[2/5] Markdown → HTML + sentinel injection")
     html_body = md_to_html(md_text)
+    html_body = compact_table_markup(html_body)
     html_body = inject_sentinels(html_body)
 
     print("[3/5] Inlining images as data URIs")

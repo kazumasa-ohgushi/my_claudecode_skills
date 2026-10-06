@@ -42,7 +42,7 @@ Always output to the dedicated test folder (`--folder-id 1fK-D6qThzrCFzn7wX5_mId
 | File | Covers |
 |---|---|
 | `md-to-gdoc/testdata/style_sample.md` | H1–H6, bold/italic/strikethrough, inline code, links + linkify, Japanese text, tight/loose/nested bullet + ordered lists, 6-row table, blockquote, fenced code blocks (Python; SQL with multi-line `/* */` block comments, consecutive `--` lines, and trailing comments), horizontal rule, narrow + wide (capped) PNG images |
-| `md-to-gdoc/testdata/regression_sample.md` | Past bugs: inline formatting / adjacent links inside table cells, four blockquote shapes (plain, multi-paragraph, list-only, intro + list). Add a case here whenever a bug is fixed. |
+| `md-to-gdoc/testdata/regression_sample.md` | Past bugs: inline formatting / adjacent links inside table cells, four blockquote shapes (plain, multi-paragraph, list-only, intro + list), inline code nested in blockquotes, SQL comment-rewrite edge cases, code-block indent. Add a case here whenever a bug is fixed. |
 
 ```bash
 ts=$(date '+%Y-%m-%d %H:%M:%S')
@@ -59,7 +59,7 @@ Check items against `md-to-gdoc/VALIDATION.md` ("Checked in the rendered output"
 
 The pipeline is five stages, all in one file:
 
-1. **`md_to_html(md)`** — markdown-it-py with the `gfm-like` preset (tables, strikethrough, linkify). `linkify-it-py` is a hard dependency because the preset enables linkify.
+1. **`md_to_html(md)`** — markdown-it-py with the `gfm-like` preset (tables, strikethrough, linkify). `linkify-it-py` is a hard dependency because the preset enables linkify. SQL fences (`sql`/`bigquery`/`bq`/`postgres(ql)`/`mysql`) get every `--` comment rewritten to `/* */` here (`sql_line_comments_to_block`), because Docs' SQL code-block highlighting treats a `--` comment as running to the end of the block.
 
 2. **`inject_sentinels(html)`** — wraps target HTML regions with single-codepoint math-bracket sentinels:
    - `⟦…⟧` (U+27E6/U+27E7) inside each `<code>`
@@ -72,9 +72,9 @@ The pipeline is five stages, all in one file:
 
 4. **`get_or_create_doc(...)`** — if `--doc-id` is given, calls `drive.files().update(fileId=doc_id, media_body=html)` to replace the existing Doc's content **in place** (preserves URL, sharing, comments). Otherwise calls `drive.files().create(...)` with `mimeType=application/vnd.google-apps.document`. Falls back to create-new if the update fails (e.g., doc not found).
 
-5. **`post_process(docs, doc_id)`** — fetches the Doc back via Docs API and builds a single `batchUpdate`. **Ordering is load-bearing**: style-only requests come first (they don't shift indices), then sentinel-based requests sorted by start-index DESC so each pair's deletes only shift indices higher than later (lower-index) pairs.
+5. **`post_process(docs, doc_id)`** — fetches the Doc back via Docs API and builds a single `batchUpdate`. **Ordering is load-bearing**: every style request (style-only passes and sentinel-based styles) is emitted against the original indices first, then all sentinel characters are deleted in a single pass by index DESC. Do not delete per pair: ranges nest (inline code inside a blockquote), and an inner pair's deletes shift the outer pair's close index.
 
-   The style passes are: paragraph spacing (`spaceBelow=4pt` on NORMAL_TEXT), heading spacing (per-level `spaceAbove`), table column widths (`FIXED_WIDTH = MAX_CONTENT_WIDTH_PT / n_cols`), table cell padding (6/8pt), and table header bold (row 0 of every table). Sentinel-based passes re-apply inline-code (Courier New + red FG + cream BG), blockquote (left border bar), and code block (Courier New 9pt + dark gray FG + cream BG + 18pt indent), then delete the sentinel chars.
+   The style passes are: document-wide named styles (`NAMED_STYLE_PRESET`), paragraph spacing (`spaceBelow=4pt` on NORMAL_TEXT), heading spacing (per-level `spaceAbove`), table column widths (`FIXED_WIDTH = MAX_CONTENT_WIDTH_PT / n_cols`), table cell padding (6/8pt), and table decoration (`_table_decoration_requests`). Tables get a navy `#040078` header row with white, non-bold text (the importer's `<th>` bold is removed); body rows alternating white / `#F6F8F9`; hairline (0.42pt) navy borders on every cell; content vertically centered. Sentinel-based passes re-apply inline code (Roboto Mono + red FG + light pink BG), blockquote (3pt gray left border), and code block (Roboto Mono 9pt + dark gray FG + light gray BG + 18pt indent on every line, `indentFirstLine` included), then delete the sentinel chars.
 
 ### Adding a new sentinel-based style
 

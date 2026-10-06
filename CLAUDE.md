@@ -33,7 +33,27 @@ pip install google-auth google-auth-httplib2 google-api-python-client \
 python3 md-to-gdoc/md_to_gdoc.py path/to/file.md [--title "..."] [--doc-id ID] [--folder-id ID]
 ```
 
-There is no test suite or linter configured. Validate changes by running the script end-to-end against a real Markdown file and opening the resulting doc.
+There is no test suite or linter configured. Validate changes by running the script end-to-end against the fixtures below and opening the resulting docs.
+
+### Validation fixtures
+
+Always output to the dedicated test folder (`--folder-id 1fK-D6qThzrCFzn7wX5_mId5XjWXbBMND`, https://drive.google.com/drive/folders/1fK-D6qThzrCFzn7wX5_mId5XjWXbBMND) so test docs don't pile up in Drive root. Create a new doc each run (no `--doc-id`), and append a timestamp to the title (`<fixture> YYYY-MM-DD HH:MM:SS`) so runs can be told apart in the folder.
+
+| File | Covers |
+|---|---|
+| `md-to-gdoc/testdata/style_sample.md` | H1–H6, bold/italic/strikethrough, inline code, links + linkify, Japanese text, tight/loose/nested bullet + ordered lists, 6-row table, blockquote, fenced code blocks (Python; SQL with multi-line `/* */` block comments, consecutive `--` lines, and trailing comments), horizontal rule, narrow + wide (capped) PNG images |
+| `md-to-gdoc/testdata/regression_sample.md` | Past bugs: inline formatting / adjacent links inside table cells, four blockquote shapes (plain, multi-paragraph, list-only, intro + list). Add a case here whenever a bug is fixed. |
+
+```bash
+ts=$(date '+%Y-%m-%d %H:%M:%S')
+for f in md-to-gdoc/testdata/*.md; do
+  python3 md-to-gdoc/md_to_gdoc.py "$f" \
+    --folder-id 1fK-D6qThzrCFzn7wX5_mId5XjWXbBMND \
+    --title "$(basename "$f" .md) $ts"
+done
+```
+
+Check items against `md-to-gdoc/VALIDATION.md` ("Checked in the rendered output"), and update that file's run date/results after a validation round.
 
 ### Architecture (md_to_gdoc.py)
 

@@ -2,7 +2,7 @@
 
 Last run: 2026-10-06, against `md_to_gdoc.py` at `a2e7ed0` plus the table-color commit that adds this line.
 
-How to run: see "Validation fixtures" in the repo's `CLAUDE.md`.
+How to run: see "Validation fixtures" in `md-to-gdoc/CLAUDE.md`.
 
 ## Round 2026-10-06
 

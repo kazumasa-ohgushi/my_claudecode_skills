@@ -1,0 +1,73 @@
+# md-to-gdoc — development conventions
+
+Converts a local Markdown file (with embedded PNG images) into a Google Doc by uploading HTML to Drive (which converts it to a Doc) and then re-applying styling that Drive's HTML importer drops.
+
+Paths and commands below are relative to the repo root.
+
+## Running locally during development
+
+```bash
+# One-time auth (gives ADC both Drive and Cloud Platform scopes)
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive
+
+pip install google-auth google-auth-httplib2 google-api-python-client \
+            Pillow markdown-it-py linkify-it-py
+
+# Run directly against a test .md
+python3 md-to-gdoc/md_to_gdoc.py path/to/file.md [--title "..."] [--doc-id ID] [--folder-id ID]
+```
+
+There is no test suite or linter configured. Validate changes by running the script end-to-end against the fixtures below and opening the resulting docs.
+
+## Validation fixtures
+
+Always output to the dedicated test folder (`--folder-id 1fK-D6qThzrCFzn7wX5_mId5XjWXbBMND`, https://drive.google.com/drive/folders/1fK-D6qThzrCFzn7wX5_mId5XjWXbBMND) so test docs don't pile up in Drive root. Create a new doc each run (no `--doc-id`), and append a timestamp to the title (`<fixture> YYYY-MM-DD HH:MM:SS`) so runs can be told apart in the folder.
+
+| File | Covers |
+|---|---|
+| `md-to-gdoc/testdata/style_sample.md` | H1–H6, bold/italic/strikethrough, inline code, links + linkify, Japanese text, tight/loose/nested bullet + ordered lists, 6-row table, blockquote, fenced code blocks (Python; SQL with multi-line `/* */` block comments, consecutive `--` lines, and trailing comments), horizontal rule, narrow + wide (capped) PNG images |
+| `md-to-gdoc/testdata/regression_sample.md` | Past bugs: inline formatting / adjacent links inside table cells, four blockquote shapes (plain, multi-paragraph, list-only, intro + list), inline code nested in blockquotes, SQL comment-rewrite edge cases, code-block indent. Add a case here whenever a bug is fixed. |
+
+```bash
+ts=$(date '+%Y-%m-%d %H:%M:%S')
+for f in md-to-gdoc/testdata/*.md; do
+  python3 md-to-gdoc/md_to_gdoc.py "$f" \
+    --folder-id 1fK-D6qThzrCFzn7wX5_mId5XjWXbBMND \
+    --title "$(basename "$f" .md) $ts"
+done
+```
+
+Check items against `md-to-gdoc/VALIDATION.md` ("Checked in the rendered output"), and update that file's run date/results after a validation round.
+
+## Architecture (md_to_gdoc.py)
+
+The pipeline is five stages, all in one file:
+
+1. **`md_to_html(md)`** — markdown-it-py with the `gfm-like` preset (tables, strikethrough, linkify). `linkify-it-py` is a hard dependency because the preset enables linkify. SQL fences (`sql`/`bigquery`/`bq`/`postgres(ql)`/`mysql`) get every `--` comment rewritten to `/* */` here (`sql_line_comments_to_block`), because Docs' SQL code-block highlighting treats a `--` comment as running to the end of the block.
+
+2. **`inject_sentinels(html)`** — wraps target HTML regions with single-codepoint math-bracket sentinels:
+   - `⟦…⟧` (U+27E6/U+27E7) inside each `<code>`
+   - `⦃…⦄` (U+2983/U+2984) inside the first/last `<p>` of each `<blockquote>`
+   - `⌈…⌉` (U+2308/U+2309) inside each `<pre><code>`
+
+   **PUA codepoints (U+E000-U+F8FF) cannot be used as sentinels** — Drive's HTML importer collapses every PUA codepoint to U+E907 during import. Math characters survive distinctly. If you add another sentinel pair, pick from outside the PUA block and verify with a probe upload first.
+
+3. **`inline_images_as_data_uri(html, base_dir)`** — replaces every local `<img src="…">` with a base64 data URI AND sets explicit `width`/`height` attributes capped at `MAX_CONTENT_WIDTH_PT × 96/72 ≈ 887 px`. Without the cap, Drive uses the image's intrinsic pixel size and wide PNGs overflow the pageless content area.
+
+4. **`get_or_create_doc(...)`** — if `--doc-id` is given, calls `drive.files().update(fileId=doc_id, media_body=html)` to replace the existing Doc's content **in place** (preserves URL, sharing, comments). Otherwise calls `drive.files().create(...)` with `mimeType=application/vnd.google-apps.document`. Falls back to create-new if the update fails (e.g., doc not found).
+
+5. **`post_process(docs, doc_id)`** — fetches the Doc back via Docs API and builds a single `batchUpdate`. **Ordering is load-bearing**: every style request (style-only passes and sentinel-based styles) is emitted against the original indices first, then all sentinel characters are deleted in a single pass by index DESC. Do not delete per pair: ranges nest (inline code inside a blockquote), and an inner pair's deletes shift the outer pair's close index.
+
+   The style passes are: document-wide named styles (`NAMED_STYLE_PRESET`), paragraph spacing (`spaceBelow=4pt` on NORMAL_TEXT), heading spacing (per-level `spaceAbove`), table column widths (`FIXED_WIDTH = MAX_CONTENT_WIDTH_PT / n_cols`), table cell padding (6/8pt), and table decoration (`_table_decoration_requests`). Table colors follow the 2026 Moloco visual identity (`~/.claude/skills/artifact-tone/chart-brand.md`): deep-teal `#00645D` header row (a step of the guide's Teal sequential ramp, white text 7.0:1) with white, non-bold text centered in every column (the importer's `<th>` bold is removed; GFM column alignment still applies to body rows); body rows alternating white / Parchment `#FAF9F5`; hairline (0.42pt) Vellum `#E8E6DB` borders on every cell; content vertically centered. Sentinel-based passes re-apply inline code (Roboto Mono + red FG + light pink BG), blockquote (3pt gray left border), and code block (Roboto Mono 9pt + dark gray FG + light gray BG + 18pt indent on every line, `indentFirstLine` included), then delete the sentinel chars.
+
+## Adding a new sentinel-based style
+
+1. Pick two unused single-codepoint chars outside U+E000-U+F8FF. Add to the `S_*_OPEN`/`S_*_CLOSE` block at the top.
+2. Add an `inject_sentinels` branch that wraps the relevant HTML region with the new pair.
+3. In `build_post_process_requests`, add a `find_sentinel_ranges(...)` call and an `if kind == "...":` branch that emits the style request(s) for the content range `[start+1, end)`.
+4. Probe the upload once: confirm the new sentinel chars survive Drive's HTML conversion distinctly (not collapsed like PUA).
+
+## Image handling
+
+No Drive image files are created. Images are embedded as base64 data URIs in the HTML upload body, so there is no public-link window and no cleanup step. Width is capped at `MAX_CONTENT_WIDTH_PT = 665` (pageless content width); height scales proportionally.

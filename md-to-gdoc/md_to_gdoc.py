@@ -634,8 +634,8 @@ def _table_cell_padding_requests(doc: dict) -> list[dict]:
 
 def _table_decoration_requests(doc: dict) -> list[dict]:
     """Decorate each table per the Moloco visual identity: hairline Vellum
-    borders on every cell, a deep-teal header row with white text, and body
-    rows alternating between white and Parchment. Cell content is
+    borders on every cell, a deep-teal header row with centered white text,
+    and body rows alternating between white and Parchment. Cell content is
     centered vertically — the HTML importer gives the header row an extra
     line of height, which top-aligned text makes look lopsided."""
 
@@ -698,14 +698,26 @@ def _table_decoration_requests(doc: dict) -> list[dict]:
                 }
             })
 
-        # Header text: white, and un-bold whatever the <th> import applied
-        # (the dark band already carries the emphasis).
+        # Header text: centered in every column (overriding any GFM column
+        # alignment, which still applies to body rows), white, and un-bold
+        # whatever the <th> import applied (the dark band already carries
+        # the emphasis).
         header_row = (table.get("tableRows") or [{}])[0]
         for cell in header_row.get("tableCells", []):
             for content_elem in cell.get("content", []):
                 para = content_elem.get("paragraph")
                 if not para:
                     continue
+                out.append({
+                    "updateParagraphStyle": {
+                        "range": {
+                            "startIndex": content_elem["startIndex"],
+                            "endIndex": content_elem["endIndex"],
+                        },
+                        "paragraphStyle": {"alignment": "CENTER"},
+                        "fields": "alignment",
+                    }
+                })
                 for pe in para.get("elements", []):
                     tr = pe.get("textRun")
                     if not tr:

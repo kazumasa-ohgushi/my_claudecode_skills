@@ -87,7 +87,7 @@ When this skill is invoked:
   renders in Roboto Mono.
 - In SQL code blocks (` ```sql `, `bigquery`, `bq`, `postgresql`, `postgres`, `mysql`), every `-- comment` is rewritten as `/* comment */`. Once the block is switched to a Docs SQL code block, a `--` comment would otherwise be highlighted as a comment through to the end of the block. Strings, backtick identifiers and existing `/* */` comments are left untouched.
 - Tables follow the 2026 Moloco visual identity: a deep-teal (#00645D)
-  header band with white text, body rows alternating white / Parchment
+  header band with centered white text, body rows alternating white / Parchment
   (#FAF9F5), and hairline Vellum (#E8E6DB) borders on every cell. Cell content is
   vertically centered.
 - Bullet and ordered lists are real Docs lists (●/○/■ and 1./a./i.), so

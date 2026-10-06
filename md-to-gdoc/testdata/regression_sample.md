@@ -70,3 +70,13 @@ Non-SQL fence: `--` must stay unchanged.
 ```text
 --flag value  -- not SQL
 ```
+
+## Code block indent
+
+Every line must start at the same left edge (no hanging indent from line 2):
+
+```python
+first_line = 1
+second_line = 2
+    indented_third = 3
+```

@@ -816,13 +816,17 @@ def build_post_process_requests(doc: dict) -> list[dict]:
             requests.append({
                 "updateParagraphStyle": {
                     "range": {"startIndex": content_start, "endIndex": content_end},
+                    # indentFirstLine must match indentStart: the block is one
+                    # paragraph joined by soft line breaks, so without it the
+                    # first line sits at 0pt and the rest hang at 18pt.
                     "paragraphStyle": {
+                        "indentFirstLine": {"magnitude": 18, "unit": "PT"},
                         "indentStart": {"magnitude": 18, "unit": "PT"},
                         "indentEnd": {"magnitude": 18, "unit": "PT"},
                         "shading": {"backgroundColor": _rgb(CODE_BLOCK_BG)},
                         "spaceBelow": {"magnitude": 0, "unit": "PT"},
                     },
-                    "fields": "indentStart,indentEnd,shading,spaceBelow",
+                    "fields": "indentFirstLine,indentStart,indentEnd,shading,spaceBelow",
                 }
             })
             requests.append({

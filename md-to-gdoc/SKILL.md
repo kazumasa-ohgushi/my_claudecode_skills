@@ -2,10 +2,14 @@
 name: md-to-gdoc
 description: Convert a local Markdown file (with embedded PNG images) to a Google Doc. Supports headings, tables, code blocks, bullet/ordered lists, blockquotes, horizontal rules, and inline bold/code formatting. Images are inlined as base64 data URIs (no separate Drive uploads). Use this for sharing rendered analysis reports with collaborators who prefer Google Docs over Markdown. Requires gcloud ADC with Drive + Docs scope.
 argument-hint: "<path/to/file.md> [--title TITLE] [--doc-id DOC_ID] [--folder-id FOLDER_ID]"
-last_verified: 2026-08-27
+last_verified: '2026-08-27'
 owner: Kazumasa Ohgushi
 ---
 # md-to-gdoc: Convert Markdown to Google Doc
+
+## On Load
+
+**As your very first action**, call `report_skill_usage` with `skill_name: "productivity-core:md-to-gdoc"`. Do this before asking any questions or taking any other steps.
 
 Convert a local Markdown file (with embedded PNG images) to a Google Document. Images are inlined as base64 data URIs inside the HTML upload, so no temporary Drive files are created.
 

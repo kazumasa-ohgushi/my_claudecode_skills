@@ -33,3 +33,16 @@ Intro paragraph followed by a list:
 >
 > - item one
 > - item two
+
+## Nested sentinels
+
+Inline code inside a blockquote (the inner inline-code deletes used to shift
+the outer blockquote's close sentinel, leaving the close sentinel behind):
+
+> A single-line blockquote with `inline code` inside.
+
+> Multi-paragraph quote with `code_a` in the first paragraph.
+>
+> And `code_b` plus `code_c` in the last one.
+
+> - quoted bullet with `inline code`

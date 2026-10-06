@@ -692,9 +692,10 @@ def build_post_process_requests(doc: dict) -> list[dict]:
     Order matters because deleteContentRange shifts indices:
       1. Non-shifting style-only requests (paragraph/heading spacing,
          table widths/padding, table decoration)
-      2. Sentinel-based requests, processed by start-index DESC so each
-         pair's deletes only shift indices higher than later (lower-index)
-         pairs — which means those later pairs are unaffected.
+      2. Sentinel-based style requests, all against the original indices
+      3. Every sentinel delete, in one pass by index DESC. Deleting per pair
+         breaks when ranges nest (inline code inside a blockquote): the inner
+         pair's deletes shift the outer pair's close index.
     """
 
     requests: list[dict] = []
@@ -734,9 +735,10 @@ def build_post_process_requests(doc: dict) -> list[dict]:
     )
 
     ops = inline + quotes + blocks
-    ops.sort(key=lambda x: -x[0])  # descending start index
+    sentinel_indices: list[int] = []
 
     for start, end, kind in ops:
+        sentinel_indices.extend((start, end))
         content_start = start + 1
         content_end = end  # exclusive of close sentinel position
 
@@ -805,16 +807,12 @@ def build_post_process_requests(doc: dict) -> list[dict]:
                 }
             })
 
-        # Delete close (higher index) first, then open. Both are at indices
-        # >= start; later (lower-start) ops are unaffected.
+    # Highest index first, so each delete only shifts text that has already
+    # been handled.
+    for idx in sorted(sentinel_indices, reverse=True):
         requests.append({
             "deleteContentRange": {
-                "range": {"startIndex": end, "endIndex": end + 1}
-            }
-        })
-        requests.append({
-            "deleteContentRange": {
-                "range": {"startIndex": start, "endIndex": start + 1}
+                "range": {"startIndex": idx, "endIndex": idx + 1}
             }
         })
 

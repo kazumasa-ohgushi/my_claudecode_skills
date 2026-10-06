@@ -46,3 +46,27 @@ the outer blockquote's close sentinel, leaving the close sentinel behind):
 > And `code_b` plus `code_c` in the last one.
 
 > - quoted bullet with `inline code`
+
+## SQL comment rewrite
+
+Every `--` comment must come out as a block comment. Dashes inside strings,
+backtick identifiers and existing block comments must stay as they are.
+
+```sql
+-- full-line comment
+SELECT
+  '--not a comment' AS s1,     -- trailing comment
+  "a--b" AS s2,
+  `x--y` AS ident,
+  1 /* keep -- inside block */ AS n
+FROM t
+--
+-- comment containing */ end marker
+WHERE x = 'it''s'  -- after doubled quote
+```
+
+Non-SQL fence: `--` must stay unchanged.
+
+```text
+--flag value  -- not SQL
+```

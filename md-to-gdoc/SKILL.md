@@ -68,6 +68,7 @@ When this skill is invoked:
 | Images | `![alt](relative/path/to/image.png)` |
 | Tables | GFM pipe tables (navy header band, alternating row fill) |
 | Blockquotes | `> text` |
+| Code blocks | ` ```lang ` fenced blocks (` ```sql ` etc.) |
 | Bullet lists | `- item` |
 | Ordered lists | `1. item` |
 | Horizontal rule | `---` |
@@ -84,6 +85,7 @@ When this skill is invoked:
   headings, gray H3-H6) is applied document-wide, with the Title and H1-H3
   bolded. Blank lines in the source survive as empty paragraphs, and code
   renders in Roboto Mono.
+- In SQL code blocks (` ```sql `, `bigquery`, `bq`, `postgresql`, `postgres`, `mysql`), every `-- comment` is rewritten as `/* comment */`. Once the block is switched to a Docs SQL code block, a `--` comment would otherwise be highlighted as a comment through to the end of the block. Strings, backtick identifiers and existing `/* */` comments are left untouched.
 - Tables get a navy header band with white text, body rows alternating
   white / #F6F8F9, and hairline navy borders on every cell. Cell content is
   vertically centered.

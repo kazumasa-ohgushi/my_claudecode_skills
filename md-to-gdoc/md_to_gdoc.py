@@ -163,6 +163,41 @@ def authenticate():
 # Markdown → HTML
 # ---------------------------------------------------------------------------
 
+SQL_FENCE_LANGS = {"sql", "bigquery", "bq", "postgresql", "postgres", "mysql"}
+
+
+def sql_line_comments_to_block(sql: str) -> str:
+    """Rewrite every `-- comment` as `/* comment */`. When a Docs code block
+    is switched to SQL highlighting, a `--` comment is styled as a comment
+    through to the end of the block, not just the line. Quoted strings,
+    backtick identifiers and existing /* */ comments are left untouched."""
+    out: list[str] = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch in "'\"`":
+            j = i + 1
+            while j < n and sql[j] != ch and sql[j] != "\n":
+                j += 2 if sql[j] == "\\" else 1
+            out.append(sql[i:j + 1])
+            i = j + 1
+        elif sql.startswith("/*", i):
+            j = sql.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            out.append(sql[i:j])
+            i = j
+        elif sql.startswith("--", i):
+            j = sql.find("\n", i)
+            j = n if j == -1 else j
+            text = sql[i + 2:j].strip().replace("*/", "* /")
+            out.append(f"/* {text} */" if text else "/* */")
+            i = j
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def md_to_html(md_text: str) -> str:
     """Render markdown to HTML, preserving source blank lines as empty
     <p></p> paragraphs (Drive's HTML importer keeps them as empty
@@ -173,6 +208,10 @@ def md_to_html(md_text: str) -> str:
     md = MarkdownIt("gfm-like")  # tables, strikethrough, linkify
     env: dict = {}
     tokens = md.parse(md_text, env)
+
+    for tok in tokens:
+        if tok.type == "fence" and tok.info.strip().lower() in SQL_FENCE_LANGS:
+            tok.content = sql_line_comments_to_block(tok.content)
 
     # Split the token stream into top-level blocks.
     chunks: list[tuple[int, int]] = []

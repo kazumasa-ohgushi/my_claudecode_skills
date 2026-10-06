@@ -1,6 +1,6 @@
 # Validation — md-to-gdoc
 
-Last run: 2026-10-06, against `md_to_gdoc.py` at `a2e7ed0`.
+Last run: 2026-10-06, against `md_to_gdoc.py` at `a2e7ed0` plus the table-color commit that adds this line.
 
 How to run: see "Validation fixtures" in the repo's `CLAUDE.md`.
 
@@ -30,6 +30,7 @@ re-verified.
 - **Sentinels**: no sentinel character remains in either doc.
 - **Nested sentinels** (fixed in `bcf4f00`): all 7 quotes in `regression_sample` carry the left border, including the three with inline code inside, and inline-code styling covers exactly the code text. The same fixture on the pre-fix code leaves `⟦⟧⦃⦄` in the doc, so the case reproduces the bug.
 - **SQL comment rewrite** (`3c43ca8`): every `--` comment in a `sql` fence comes out as `/* ... */`; `--` inside strings, backtick identifiers and existing block comments is unchanged; `*/` inside a comment becomes `* /`; a bare `--` becomes `/* */`. A `text` fence keeps its `--` unchanged.
+- **Table colors** (2026 Moloco visual identity): every table has a `#00645D` header row with white text, body rows alternating `#FFFFFF` / `#FAF9F5`, and `#E8E6DB` borders. Candidate header and stripe colors were compared in separate side-by-side docs before choosing.
 - **Code-block indent** (`a2e7ed0`): every code-block paragraph has `indentFirstLine` = `indentStart` = 18pt, so no line hangs. Line breaks, leading spaces and the ` * ` lines of block comments are preserved.
 
 ### Not checked this round

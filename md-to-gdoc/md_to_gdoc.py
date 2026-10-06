@@ -77,13 +77,17 @@ MUTED_FG = {"red": 0.2627451, "green": 0.2627451, "blue": 0.2627451}  # #434343
 SUBTLE_FG = {"red": 0.4, "green": 0.4, "blue": 0.4}                   # #666666
 WHITE = {"red": 1.0, "green": 1.0, "blue": 1.0}
 
-# Table decoration: navy header band, alternating body rows, hairline navy
-# borders on every cell.
-ACCENT = {"red": 0.015686275, "green": 0.0, "blue": 0.47058824}            # #040078
-TABLE_HEADER_BG = ACCENT
+# Table decoration, from the 2026 Moloco visual identity: deep-teal header
+# band (a step of the Teal sequential ramp; white text 7.0:1) with white text,
+# body rows alternating white / Parchment, hairline Vellum borders (the
+# guide's grid-line color) on every cell.
+DEEP_TEAL = {"red": 0.0, "green": 0.39215687, "blue": 0.3647059}           # #00645D
+PARCHMENT = {"red": 0.98039216, "green": 0.9764706, "blue": 0.9607843}     # #FAF9F5
+VELLUM = {"red": 0.9098039, "green": 0.9019608, "blue": 0.85882353}        # #E8E6DB
+TABLE_HEADER_BG = DEEP_TEAL
 TABLE_HEADER_FG = WHITE
-TABLE_STRIPE_BG = {"red": 0.9647059, "green": 0.972549, "blue": 0.9764706}  # #F6F8F9
-TABLE_BORDER_FG = ACCENT
+TABLE_STRIPE_BG = PARCHMENT
+TABLE_BORDER_FG = VELLUM
 TABLE_BORDER_WIDTH_PT = 0.416667
 
 BODY_FONT = "Arial"
@@ -629,9 +633,9 @@ def _table_cell_padding_requests(doc: dict) -> list[dict]:
 
 
 def _table_decoration_requests(doc: dict) -> list[dict]:
-    """Decorate each table like the reference Doc: hairline accent borders
-    on every cell, an accent-filled header row with white text, and body
-    rows alternating between white and a light tint. Cell content is
+    """Decorate each table per the Moloco visual identity: hairline Vellum
+    borders on every cell, a deep-teal header row with white text, and body
+    rows alternating between white and Parchment. Cell content is
     centered vertically — the HTML importer gives the header row an extra
     line of height, which top-aligned text makes look lopsided."""
 
@@ -695,7 +699,7 @@ def _table_decoration_requests(doc: dict) -> list[dict]:
             })
 
         # Header text: white, and un-bold whatever the <th> import applied
-        # (the accent band already carries the emphasis).
+        # (the dark band already carries the emphasis).
         header_row = (table.get("tableRows") or [{}])[0]
         for cell in header_row.get("tableCells", []):
             for content_elem in cell.get("content", []):

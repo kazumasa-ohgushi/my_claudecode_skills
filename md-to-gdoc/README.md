@@ -57,7 +57,7 @@ In a Claude Code session:
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
 | Images | `![alt](relative/path/to/image.png)` |
-| Tables | GFM pipe tables (navy header band, alternating row fill) |
+| Tables | GFM pipe tables (deep-teal header band, alternating row fill) |
 | Blockquotes | `> text` |
 | Code blocks | ` ```lang ` fenced blocks (` ```sql ` etc.) |
 | Bullet lists | `- item` |
@@ -71,7 +71,7 @@ In a Claude Code session:
 - The document is created in pageless format automatically.
 - Typography mirrors Google's own markdown importer: its named-style set (Arial 11 body at 115% line spacing, 26/20/16/14pt title and headings, gray H3-H6), with the Title and H1-H3 bolded, blank lines preserved as empty paragraphs, and Roboto Mono code.
 - In SQL code blocks (` ```sql `, `bigquery`, `bq`, `postgresql`, `postgres`, `mysql`), every `-- comment` is rewritten as `/* comment */`. Once the block is switched to a Docs SQL code block, a `--` comment would otherwise be highlighted as a comment through to the end of the block. Strings, backtick identifiers and existing `/* */` comments are left untouched.
-- Tables get a navy header band with white text, body rows alternating white / #F6F8F9, and hairline navy borders on every cell.
+- Tables follow the 2026 Moloco visual identity: a deep-teal (#00645D) header band with white text, body rows alternating white / Parchment (#FAF9F5), and hairline Vellum (#E8E6DB) borders on every cell. Cell content is vertically centered.
 - Bullet and ordered lists are real Docs lists (●/○/■ and 1./a./i.), so Docs auto-continues them when the doc is edited.
 - Wide images are capped at the pageless content width (~665pt) display-wise; full pixel resolution is preserved.
 - New documents land in the authenticated user's Drive root unless `--folder-id` is given.

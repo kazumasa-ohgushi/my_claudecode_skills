@@ -66,7 +66,7 @@ When this skill is invoked:
 | Inline code | `` `code` `` |
 | Bold + code | `` **`code`** `` |
 | Images | `![alt](relative/path/to/image.png)` |
-| Tables | GFM pipe tables (navy header band, alternating row fill) |
+| Tables | GFM pipe tables (deep-teal header band, alternating row fill) |
 | Blockquotes | `> text` |
 | Code blocks | ` ```lang ` fenced blocks (` ```sql ` etc.) |
 | Bullet lists | `- item` |
@@ -86,8 +86,9 @@ When this skill is invoked:
   bolded. Blank lines in the source survive as empty paragraphs, and code
   renders in Roboto Mono.
 - In SQL code blocks (` ```sql `, `bigquery`, `bq`, `postgresql`, `postgres`, `mysql`), every `-- comment` is rewritten as `/* comment */`. Once the block is switched to a Docs SQL code block, a `--` comment would otherwise be highlighted as a comment through to the end of the block. Strings, backtick identifiers and existing `/* */` comments are left untouched.
-- Tables get a navy header band with white text, body rows alternating
-  white / #F6F8F9, and hairline navy borders on every cell. Cell content is
+- Tables follow the 2026 Moloco visual identity: a deep-teal (#00645D)
+  header band with white text, body rows alternating white / Parchment
+  (#FAF9F5), and hairline Vellum (#E8E6DB) borders on every cell. Cell content is
   vertically centered.
 - Bullet and ordered lists are real Docs lists (●/○/■ and 1./a./i.), so
   Docs auto-continues them when the doc is edited.

@@ -2,7 +2,7 @@
 
 Last run: 2026-10-06, against `md_to_gdoc.py` at `a2e7ed0` plus the table-color commit that adds this line.
 
-How to run: see "Validation fixtures" in `md-to-gdoc/CLAUDE.md`.
+Fixtures (`testdata/`) and how to run them live in the upstream repo: see "Validation fixtures" in [kazumasa-ohgushi/my_claudecode_skills `md-to-gdoc/CLAUDE.md`](https://github.com/kazumasa-ohgushi/my_claudecode_skills/blob/main/md-to-gdoc/CLAUDE.md). Commit hashes below refer to that repo.
 
 ## Round 2026-10-06
 
